@@ -1,0 +1,154 @@
+// insert.go
+package hnsw
+
+import (
+	"container/heap"
+	"math"
+
+	"dmarro89.github.com/hnsw-go/structs"
+)
+
+// Algorithm 1
+// INSERT(hnsw, q, M, Mmax, efConstruction, mL)
+// The insertion process follows Algorithm 1 of the original HNSW paper and consists
+// of two main phases:
+// 1. Finding the entry point by descending through layers
+// 2. Building connections at each layer from the entry point down
+//
+// The algorithm maintains the small world properties of the graph by:
+// - Randomly selecting the maximum layer for new elements
+// - Establishing bidirectional connections at each layer
+// - Maintaining a fixed maximum number of connections per node
+//
+// Time Complexity: O(log N) average case
+// Space Complexity: O(M * log N) where M is the max connections per layer
+func (h *HNSW) Insert(vector []float32, id int) {
+	if vector == nil || len(vector) == 0 {
+		panic("vector cannot be empty")
+	}
+
+	h.mutex.Lock()
+	defer h.mutex.Unlock()
+
+	// l ← ⌊-ln(unif(0..1))∙mL⌋ // new element’s level
+	// Generate the level for the new node based on a random distribution.
+	level := h.RandomLevel()
+	q := structs.NewNode(id, vector, level, h.MaxLevel, h.Mmax)
+
+	// Generate the level for the new node based on a random distribution.
+	if h.EntryPoint == nil {
+		h.EntryPoint = q
+		h.Nodes = append(h.Nodes, q)
+		return
+	}
+
+	// ep ← get entry point for hnsw
+	ep := h.EntryPoint
+	// L ← level of ep - top layer for hnsw
+	L := ep.Level
+
+	// Phase 1: Descend through layers to find entry point for insertion
+	// This phase finds good starting points for the lower layer insertions
+	// for lc ← L … l+1
+	for lc := L; lc > level; lc-- {
+		// W ← SEARCH-LAYER(q, ep, ef=1, lc)
+		newEp := h.greedySearchLayer(q.Vector, ep, lc)
+		if newEp == nil {
+			break
+		}
+
+		// Update entry point for next iteration
+		ep = newEp
+	}
+
+	// W ← MinHeap // list for the currently found nearest elements
+	W := h.heapPool.GetMinHeap()
+	defer h.heapPool.PutMinHeap(W)
+
+	// Phase 2: Connecting the new node at each layer from the minimum of (L, l) to the base layer (0).
+	// for lc ← min(L, l) … 0
+	maxLayer := int(math.Min(float64(L), float64(level)))
+	for lc := maxLayer; lc >= 0; lc-- {
+		W.Reset()
+
+		// W ← SEARCH-LAYER(q, ep, efConstruction, lc)
+		nearestNeighbors := h.searchLayer(q.Vector, ep, h.EfConstruction, lc)
+		for nearestNeighbors.Len() > 0 {
+			heap.Push(W, heap.Pop(nearestNeighbors))
+		}
+
+		// Ensure that the number of connections does not exceed the allowed limit.
+		maxConn := h.Mmax
+		if lc == 0 {
+			maxConn = h.Mmax0
+		}
+
+		// neighbors ← SELECT-NEIGHBORS(q, W, M, lc)
+		neighbors := h.simpleSelectNeighbors(W, maxConn)
+		h.updateBidirectionalConnections(q, neighbors, lc, maxConn)
+
+		// ep ← W
+		if W.Len() > 0 {
+			item := heap.Pop(W).(uint64)
+			_, itemID := structs.DecodeHeapItem(item)
+			ep = h.Nodes[itemID]
+		}
+	}
+
+	// If the new node's level is higher than the current top level, update the entry point.
+	// if l > L
+	if level > L {
+		h.EntryPoint = q
+	}
+
+	// Add the new node to the list of nodes in the graph
+	h.Nodes = append(h.Nodes, q)
+}
+
+// updateBidirectionalConnections establishes and maintains bidirectional connections
+// between a node and its neighbors at a specific level.
+//
+// The method ensures that:
+// 1. The node is connected to its neighbors
+// 2. The neighbors are connected back to the node
+// 3. No node exceeds its maximum allowed connections
+// 4. Connections are optimized to maintain the best possible neighbors
+func (h *HNSW) updateBidirectionalConnections(q *structs.Node, neighbors []*structs.Node, level int, maxConn int) {
+	// add bidirectional connections from neighbors to q at layer lc
+	q.Neighbors[level] = make([]*structs.Node, len(neighbors))
+	copy(q.Neighbors[level], neighbors)
+
+	tmpHeap := h.heapPool.GetMinHeap()
+	defer h.heapPool.PutMinHeap(tmpHeap)
+
+	// for each e ∈ neighbors
+	for _, neighbor := range neighbors {
+		if level >= len(neighbor.Neighbors) {
+			continue
+		}
+
+		// append q to the neighborhood of e at layer lc
+		neighbor.Neighbors[level] = append(neighbor.Neighbors[level], q)
+
+		// Check if we need to optimize connections
+		if len(neighbor.Neighbors[level]) <= maxConn {
+			continue
+		}
+
+		// Optimize the neighbors' neighborhoods.
+		tmpHeap.Reset()
+		// eConn ← neighborhood(neighbor) at layer level
+		eConn := neighbor.Neighbors[level]
+
+		for _, n := range eConn {
+			dist := h.computeAndCacheDistance(neighbor.Vector, n)
+			heap.Push(tmpHeap, structs.EncodeHeapItem(dist, n.ID))
+		}
+
+		// Shrink the neighborhood if it exceeds the allowed limit.
+		// eNewConn ← SELECT-NEIGHBORS(e, eConn, Mmax, lc)
+		eNewConn := h.simpleSelectNeighbors(tmpHeap, maxConn)
+		neighbor.Neighbors[level] = eNewConn
+
+	}
+}
