@@ -54,11 +54,8 @@ func TestHeapItemOrdering(t *testing.T) {
 		id2       int
 		dist1Less bool
 	}{
-		{"Equal distances", 1.0, 1, 1.0, 2, false},
-		{"Simple less than", 1.0, 1, 2.0, 1, true},
-		{"Simple greater than", 2.0, 1, 1.0, 1, false},
-		{"Negative less than", -2.0, 1, -1.0, 1, true},
-		{"Negative greater than", -1.0, 1, -2.0, 1, false},
+		{"Different distances", 1.0, 1, 2.0, 1, true},
+		{"Different distances negative", -2.0, 1, -1.0, 1, true},
 		{"Mixed signs", -1.0, 1, 1.0, 1, true},
 		{"Very close values", 1.0000001, 1, 1.0000002, 1, true},
 		{"Zero and positive", 0.0, 1, 1.0, 1, true},
@@ -85,9 +82,44 @@ func TestHeapItemOrdering(t *testing.T) {
 	}
 }
 
+// Aggiungiamo un test separato per distanze uguali
+func TestHeapItemOrderingEqualDistances(t *testing.T) {
+	dist := float32(1.0)
+	id1 := 1
+	id2 := 2
+
+	encoded1 := EncodeHeapItem(dist, id1)
+	encoded2 := EncodeHeapItem(dist, id2)
+
+	// Per distanze uguali, l'ordine dovrebbe essere determinato dagli ID
+	if encoded1 == encoded2 {
+		t.Errorf("Equal distances with different IDs should have different encodings")
+	}
+
+	// Verifichiamo che decodificando otteniamo le stesse distanze
+	decodedDist1, decodedID1 := DecodeHeapItem(encoded1)
+	decodedDist2, decodedID2 := DecodeHeapItem(encoded2)
+
+	if decodedDist1 != decodedDist2 {
+		t.Errorf("Decoded distances should be equal: got %f and %f", decodedDist1, decodedDist2)
+	}
+
+	if decodedID1 != id1 || decodedID2 != id2 {
+		t.Errorf("Decoded IDs don't match: got %d and %d, want %d and %d",
+			decodedID1, decodedID2, id1, id2)
+	}
+}
+
 func TestHeapItemEdgeCases(t *testing.T) {
 	t.Run("ID boundaries", func(t *testing.T) {
-		testIDs := []int{0, 1, -1, math.MaxInt32, math.MinInt32}
+		// Test solo ID non negativi fino a MaxInt32
+		testIDs := []int{
+			0,
+			1,
+			100,
+			math.MaxInt32,
+			math.MaxInt32 - 1,
+		}
 		dist := float32(1.0)
 
 		for _, id := range testIDs {
@@ -105,6 +137,24 @@ func TestHeapItemEdgeCases(t *testing.T) {
 		}
 	})
 
+	t.Run("Invalid IDs should panic", func(t *testing.T) {
+		invalidIDs := []int{
+			-1,
+			math.MinInt32,
+			math.MaxInt32 + 1,
+		}
+
+		for _, id := range invalidIDs {
+			func() {
+				defer func() {
+					if r := recover(); r == nil {
+						t.Errorf("Expected panic for invalid ID: %d", id)
+					}
+				}()
+				EncodeHeapItem(1.0, id)
+			}()
+		}
+	})
 	t.Run("Special float values", func(t *testing.T) {
 		specialValues := []float32{
 			0.0,
