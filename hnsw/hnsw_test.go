@@ -35,8 +35,8 @@ func TestValidateConfig(t *testing.T) {
 		cfg      Config
 		expected error
 	}{
-		{Config{M: 0, Mmax: 32, Mmax0: 64, EfConstruction: 200, MaxLevel: 16, DistanceFunc: EuclideanDistance}, errors.New("M must be positive")},
-		{Config{M: 16, Mmax: 0, Mmax0: 64, EfConstruction: 200, MaxLevel: 16, DistanceFunc: EuclideanDistance}, errors.New("Mmax must be positive")},
+		{Config{M: 0, Mmax: 32, Mmax0: 64, EfConstruction: 200, MaxLevel: 16, DistanceFunc: EuclideanDistance}, errors.New("m must be positive")},
+		{Config{M: 16, Mmax: 0, Mmax0: 64, EfConstruction: 200, MaxLevel: 16, DistanceFunc: EuclideanDistance}, errors.New("mmax must be positive")},
 		{Config{M: 16, Mmax: 32, Mmax0: 0, EfConstruction: 200, MaxLevel: 16, DistanceFunc: EuclideanDistance}, errors.New("Mmax0 must be positive")},
 		{Config{M: 16, Mmax: 32, Mmax0: 64, EfConstruction: 0, MaxLevel: 16, DistanceFunc: EuclideanDistance}, errors.New("EfConstruction must be positive")},
 		{Config{M: 16, Mmax: 32, Mmax0: 64, EfConstruction: 200, MaxLevel: 0, DistanceFunc: EuclideanDistance}, errors.New("MaxLevel must be positive")},
