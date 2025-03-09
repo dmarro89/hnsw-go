@@ -117,10 +117,10 @@ func NewHNSW(cfg Config) (*HNSW, error) {
 
 func validateConfig(cfg Config) error {
 	if cfg.M <= 0 {
-		return errors.New("M must be positive")
+		return errors.New("m must be positive")
 	}
 	if cfg.Mmax <= 0 {
-		return errors.New("Mmax must be positive")
+		return errors.New("mmax must be positive")
 	}
 	if cfg.Mmax0 <= 0 {
 		return errors.New("Mmax0 must be positive")
