@@ -31,7 +31,7 @@ type Node struct {
 // Returns a pointer to the newly created Node.
 func NewNode(id int, vector []float32, level, maxLevel, maxNeighbors int) *Node {
 	// Initialize neighbors slices with pre-allocated capacity
-	neighbors := make([][]*Node, maxLevel)
+	neighbors := make([][]*Node, maxLevel+1)
 	for i := range neighbors {
 		neighbors[i] = make([]*Node, 0, maxNeighbors)
 	}

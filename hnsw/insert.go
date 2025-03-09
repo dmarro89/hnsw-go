@@ -23,7 +23,7 @@ import (
 // Time Complexity: O(log N) average case
 // Space Complexity: O(M * log N) where M is the max connections per layer
 func (h *HNSW) Insert(vector []float32, id int) {
-	if vector == nil || len(vector) == 0 {
+	if len(vector) == 0 {
 		panic("vector cannot be empty")
 	}
 
