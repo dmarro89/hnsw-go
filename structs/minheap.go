@@ -16,7 +16,7 @@ func (h MinHeap) Len() int { return len(h) }
 
 // Less reports whether the element with index i should sort before the element with index j.
 // For MinHeap, smaller values have higher priority.
-func (h MinHeap) Less(i, j int) bool { return h[i] < h[j] }
+func (h MinHeap) Less(i, j int) bool { return distFromItem(h[i]) < distFromItem(h[j]) }
 
 // Swap exchanges the elements with indexes i and j.
 func (h MinHeap) Swap(i, j int) { h[i], h[j] = h[j], h[i] }

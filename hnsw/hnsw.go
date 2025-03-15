@@ -106,7 +106,7 @@ func NewHNSW(cfg Config) (*HNSW, error) {
 		DistanceFunc:        cfg.DistanceFunc,
 		RandFunc:            rand.Float64,
 		heapPool:            structs.NewHeapPoolManager(),
-		globalDistanceCache: newDistanceCache(1024),
+		globalDistanceCache: newDistanceCache(),
 		visitedPool: sync.Pool{New: func() interface{} {
 			return make(map[int]struct{}, 64)
 		}},
