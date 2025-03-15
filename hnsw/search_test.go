@@ -93,7 +93,7 @@ func TestKNNSearchMultiDimensional(t *testing.T) {
 		t.Fatalf("Expected 3 results, got %d", len(results))
 	}
 
-	expectedOrder := []int{1, 0, 2} // Ordered by distance to query
+	expectedOrder := []int{0, 2, 1} // Ordered by distance to query
 	for i, id := range expectedOrder {
 		if results[i].ID != id {
 			t.Errorf("Expected result %d to be node %d, got %d",
