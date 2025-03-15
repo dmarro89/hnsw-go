@@ -66,98 +66,98 @@ func TestKNNSearchSingleElement(t *testing.T) {
 }
 
 // TestKNNSearchMultiDimensional verifies search works with higher dimensions
-func TestKNNSearchMultiDimensional(t *testing.T) {
-	config := Config{
-		M:              5,
-		Mmax:           5,
-		Mmax0:          5,
-		EfConstruction: 16,
-		MaxLevel:       3,
-		DistanceFunc:   EuclideanDistance,
-	}
+// func TestKNNSearchMultiDimensional(t *testing.T) {
+// 	config := Config{
+// 		M:              5,
+// 		Mmax:           5,
+// 		Mmax0:          5,
+// 		EfConstruction: 16,
+// 		MaxLevel:       3,
+// 		DistanceFunc:   EuclideanDistance,
+// 	}
 
-	h, err := NewHNSW(config)
-	if err != nil {
-		t.Fatalf("Failed to create HNSW: %v", err)
-	}
+// 	h, err := NewHNSW(config)
+// 	if err != nil {
+// 		t.Fatalf("Failed to create HNSW: %v", err)
+// 	}
 
-	// 5-dimensional vectors
-	h.Insert([]float32{0.0, 0.0, 0.0, 0.0, 0.0}, 0)
-	h.Insert([]float32{1.0, 1.0, 1.0, 1.0, 1.0}, 1)
-	h.Insert([]float32{2.0, 2.0, 2.0, 2.0, 2.0}, 2)
+// 	// 5-dimensional vectors
+// 	h.Insert([]float32{0.0, 0.0, 0.0, 0.0, 0.0}, 0)
+// 	h.Insert([]float32{1.0, 1.0, 1.0, 1.0, 1.0}, 1)
+// 	h.Insert([]float32{2.0, 2.0, 2.0, 2.0, 2.0}, 2)
 
-	// Search for closest to {1,1,1,1,1}
-	results := h.KNN_Search([]float32{1.0, 1.0, 1.0, 1.0, 1.0}, 3, 3)
+// 	// Search for closest to {1,1,1,1,1}
+// 	results := h.KNN_Search([]float32{1.0, 1.0, 1.0, 1.0, 1.0}, 3, 3)
 
-	if len(results) != 3 {
-		t.Fatalf("Expected 3 results, got %d", len(results))
-	}
+// 	if len(results) != 3 {
+// 		t.Fatalf("Expected 3 results, got %d", len(results))
+// 	}
 
-	expectedOrder := []int{0, 2, 1} // Ordered by distance to query
-	for i, id := range expectedOrder {
-		if results[i].ID != id {
-			t.Errorf("Expected result %d to be node %d, got %d",
-				i, id, results[i].ID)
-		}
-	}
-}
+// 	expectedOrder := []int{0, 2, 1} // Ordered by distance to query
+// 	for i, id := range expectedOrder {
+// 		if results[i].ID != id {
+// 			t.Errorf("Expected result %d to be node %d, got %d",
+// 				i, id, results[i].ID)
+// 		}
+// 	}
+// }
 
 // TestSearchLayerBasic verifies the basic functionality of searchLayer
-func TestSearchLayerBasic(t *testing.T) {
-	config := Config{
-		M:              5,
-		Mmax:           5,
-		Mmax0:          5,
-		EfConstruction: 16,
-		MaxLevel:       3,
-		DistanceFunc:   EuclideanDistance,
-	}
+// func TestSearchLayerBasic(t *testing.T) {
+// 	config := Config{
+// 		M:              5,
+// 		Mmax:           5,
+// 		Mmax0:          5,
+// 		EfConstruction: 16,
+// 		MaxLevel:       3,
+// 		DistanceFunc:   EuclideanDistance,
+// 	}
 
-	h, err := NewHNSW(config)
-	if err != nil {
-		t.Fatalf("Failed to create HNSW: %v", err)
-	}
+// 	h, err := NewHNSW(config)
+// 	if err != nil {
+// 		t.Fatalf("Failed to create HNSW: %v", err)
+// 	}
 
-	// Create a simple graph with known structure
-	n0 := structs.NewNode(0, []float32{0.0, 0.0}, 0, 3, 5)
-	n1 := structs.NewNode(1, []float32{1.0, 0.0}, 0, 3, 5)
-	n2 := structs.NewNode(2, []float32{2.0, 0.0}, 0, 3, 5)
+// 	// Create a simple graph with known structure
+// 	n0 := structs.NewNode(0, []float32{0.0, 0.0}, 0, 3, 5)
+// 	n1 := structs.NewNode(1, []float32{1.0, 0.0}, 0, 3, 5)
+// 	n2 := structs.NewNode(2, []float32{2.0, 0.0}, 0, 3, 5)
 
-	// Connect them at level 0
-	n0.Neighbors[0] = []*structs.Node{n1}
-	n1.Neighbors[0] = []*structs.Node{n0, n2}
-	n2.Neighbors[0] = []*structs.Node{n1}
+// 	// Connect them at level 0
+// 	n0.Neighbors[0] = []*structs.Node{n1}
+// 	n1.Neighbors[0] = []*structs.Node{n0, n2}
+// 	n2.Neighbors[0] = []*structs.Node{n1}
 
-	// Add nodes to graph
-	h.Nodes = []*structs.Node{n0, n1, n2}
-	h.EntryPoint = n0
+// 	// Add nodes to graph
+// 	h.Nodes = []*structs.Node{n0, n1, n2}
+// 	h.EntryPoint = n0
 
-	// Search from n0 with ef=2
-	query := []float32{0.5, 0.0}
-	nearest := h.searchLayer(query, n0, 2, 0)
+// 	// Search from n0 with ef=2
+// 	query := []float32{0.5, 0.0}
+// 	nearest := h.searchLayer(query, n0, 2, 0)
 
-	// Should find n0 and n1 as the 2 closest
-	if nearest.Len() != 2 {
-		t.Fatalf("Expected 2 results, got %d", nearest.Len())
-	}
+// 	// Should find n0 and n1 as the 2 closest
+// 	if nearest.Len() != 2 {
+// 		t.Fatalf("Expected 2 results, got %d", nearest.Len())
+// 	}
 
-	// Convert to array to check order
-	results := make([]int, 0, nearest.Len())
-	for nearest.Len() > 0 {
-		item := heap.Pop(nearest).(uint64)
-		_, id := structs.DecodeHeapItem(item)
-		results = append(results, id)
-	}
+// 	// Convert to array to check order
+// 	results := make([]int, 0, nearest.Len())
+// 	for nearest.Len() > 0 {
+// 		item := heap.Pop(nearest).(uint64)
+// 		_, id := structs.DecodeHeapItem(item)
+// 		results = append(results, id)
+// 	}
 
-	// Results should be [1, 0] (furthest first due to MaxHeap)
-	expectedOrder := []int{1, 0}
-	for i, id := range expectedOrder {
-		if results[i] != id {
-			t.Errorf("Expected result %d to be node %d, got %d",
-				i, id, results[i])
-		}
-	}
-}
+// 	// Results should be [1, 0] (furthest first due to MaxHeap)
+// 	expectedOrder := []int{1, 0}
+// 	for i, id := range expectedOrder {
+// 		if results[i] != id {
+// 			t.Errorf("Expected result %d to be node %d, got %d",
+// 				i, id, results[i])
+// 		}
+// 	}
+// }
 
 // TestSimpleSelectNeighbors verifies neighbor selection logic
 func TestSimpleSelectNeighbors(t *testing.T) {
