@@ -6,68 +6,102 @@ import (
 	"dmarro89.github.com/hnsw-go/structs"
 )
 
-// distanceCache manages caching of distance calculations between vectors.
-// It uses a pre-allocated slice to store distances and grows exponentially when needed.
+// distanceCache provides efficient caching of distance calculations between nodes.
+// It uses a hierarchical map structure where each node has its own cache of
+// distances to other nodes.
 type distanceCache struct {
-	cache []float32
+	// nodeDistances maps each node ID to its own distance cache
+	// nodeID -> (otherNodeID -> distance)
+	nodeDistances map[int]map[int]float32
+
+	// mutex protects concurrent access to the cache
 	mutex sync.RWMutex
 }
 
-// newDistanceCache creates a new distance cache with an initial capacity.
-func newDistanceCache(initialCapacity int) *distanceCache {
-	cache := make([]float32, initialCapacity)
-	for i := range cache {
-		cache[i] = -1 // Initialize with invalid distance
-	}
+// newDistanceCache creates a new distance cache with the specified initial capacity
+func newDistanceCache() *distanceCache {
 	return &distanceCache{
-		cache: cache,
+		nodeDistances: make(map[int]map[int]float32),
 	}
 }
 
-// computeAndCache calculates and caches the distance between a query vector and a node.
-// If the distance is already cached, returns the cached value.
-// The cache grows exponentially if needed to accommodate new node IDs.
-func (h *HNSW) computeAndCacheDistance(query []float32, node *structs.Node) float32 {
-	cache := h.globalDistanceCache.cache
+// get retrieves a cached distance between two nodes if available
+func (dc *distanceCache) get(id1, id2 int) (float32, bool) {
+	dc.mutex.RLock()
+	defer dc.mutex.RUnlock()
 
-	if node.ID < len(cache) {
-		dist := cache[node.ID]
-		if dist >= 0 {
-			return dist
+	// Try to find distance from id1 -> id2
+	if nodeCache, exists := dc.nodeDistances[id1]; exists {
+		if dist, found := nodeCache[id2]; found {
+			return dist, true
 		}
 	}
 
-	dist := h.DistanceFunc(query, node.Vector)
-
-	if node.ID >= len(cache) {
-		newLen := len(cache)
-		if newLen == 0 {
-			newLen = 1
+	// If not found, try the reverse direction (since distance is symmetric)
+	if nodeCache, exists := dc.nodeDistances[id2]; exists {
+		if dist, found := nodeCache[id1]; found {
+			return dist, true
 		}
-		for newLen <= node.ID {
-			newLen *= 2
-		}
-		newCache := make([]float32, newLen)
-		copy(newCache, cache)
-		for i := len(cache); i < newLen; i++ {
-			newCache[i] = -1.0
-		}
-		h.globalDistanceCache.cache = newCache
-		cache = newCache
-	}
-	if cache[node.ID] < 0 {
-		cache[node.ID] = dist
 	}
 
+	return 0, false
+}
+
+// set stores a distance between two nodes in the cache
+func (dc *distanceCache) set(id1, id2 int, distance float32) {
+	dc.mutex.Lock()
+	defer dc.mutex.Unlock()
+
+	// Get or create the cache for the first node
+	nodeCache, exists := dc.nodeDistances[id1]
+	if !exists {
+		nodeCache = make(map[int]float32)
+		dc.nodeDistances[id1] = nodeCache
+	}
+
+	// Store the distance
+	nodeCache[id2] = distance
+}
+
+// clear empties the entire cache
+func (dc *distanceCache) clear() {
+	dc.mutex.Lock()
+	defer dc.mutex.Unlock()
+
+	dc.nodeDistances = make(map[int]map[int]float32)
+}
+
+// computeAndCacheDistance calculates and caches the distance between vectors
+func (h *HNSW) computeAndCacheDistance(v1 []float32, n2 *structs.Node) float32 {
+	// First: try to identify if v1 belongs to a node in our index (for caching)
+	var sourceID int = -1
+
+	// Check if v1 is from a node we know about
+	for _, node := range h.Nodes {
+		if node != nil && &node.Vector[0] == &v1[0] { // Compare memory addresses for efficiency
+			sourceID = node.ID
+			break
+		}
+	}
+
+	// If this is a query/search vector (not belonging to any node),
+	// or we're calculating distance to the same node, just compute without caching
+	if sourceID == -1 || sourceID == n2.ID {
+		return h.DistanceFunc(v1, n2.Vector)
+	}
+
+	// Try to retrieve from cache
+	if dist, found := h.globalDistanceCache.get(sourceID, n2.ID); found {
+		return dist
+	}
+
+	// Calculate and cache the distance
+	dist := h.DistanceFunc(v1, n2.Vector)
+	h.globalDistanceCache.set(sourceID, n2.ID, dist)
 	return dist
 }
 
 // resetCache clears all cached distances.
 func (h *HNSW) resetCache() {
-	h.globalDistanceCache.mutex.Lock()
-	defer h.globalDistanceCache.mutex.Unlock()
-
-	for i := range h.globalDistanceCache.cache {
-		h.globalDistanceCache.cache[i] = -1
-	}
+	h.globalDistanceCache.clear()
 }

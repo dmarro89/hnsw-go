@@ -204,7 +204,7 @@ func (h *HNSW) KNN_Search(query []float32, K, ef int) []*structs.Node {
 	results := make([]*structs.Node, 0, K)
 
 	for candidates.Len() > 0 && len(results) < K {
-		item := candidates.Pop().(uint64)
+		item := heap.Pop(candidates).(uint64)
 		_, itemID := structs.DecodeHeapItem(item)
 		results = append(results, h.Nodes[itemID])
 	}
@@ -225,7 +225,7 @@ func (h *HNSW) simpleSelectNeighbors(candidates *structs.MinHeap, M int) []*stru
 		item := heap.Pop(candidates).(uint64)
 		_, itemID := structs.DecodeHeapItem(item)
 
-		if itemID >= len(h.Nodes) || h.Nodes[itemID] == nil {
+		if itemID > len(h.Nodes) || h.Nodes[itemID] == nil {
 			continue
 		}
 

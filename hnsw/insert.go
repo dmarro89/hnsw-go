@@ -47,6 +47,9 @@ func (h *HNSW) Insert(vector []float32, id int) {
 	// L ← level of ep - top layer for hnsw
 	L := ep.Level
 
+	// Add the new node to the list of nodes in the graph
+	h.Nodes = append(h.Nodes, q)
+
 	// Phase 1: Descend through layers to find entry point for insertion
 	// This phase finds good starting points for the lower layer insertions
 	// for lc ← L … l+1
@@ -100,9 +103,6 @@ func (h *HNSW) Insert(vector []float32, id int) {
 	if level > L {
 		h.EntryPoint = q
 	}
-
-	// Add the new node to the list of nodes in the graph
-	h.Nodes = append(h.Nodes, q)
 }
 
 // updateBidirectionalConnections establishes and maintains bidirectional connections

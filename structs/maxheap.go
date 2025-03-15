@@ -18,7 +18,7 @@ func (h MaxHeap) Len() int { return len(h) }
 
 // Less reports whether the element with index i should sort before the element with index j.
 // For MaxHeap, larger values have higher priority.
-func (h MaxHeap) Less(i, j int) bool { return h[i] > h[j] }
+func (h MaxHeap) Less(i, j int) bool { return distFromItem(h[i]) > distFromItem(h[j]) }
 
 // Swap exchanges the elements with indexes i and j.
 func (h MaxHeap) Swap(i, j int) { h[i], h[j] = h[j], h[i] }
@@ -50,4 +50,10 @@ func (h MaxHeap) Peek() uint64 {
 		return math.MaxUint64
 	}
 	return h[0]
+}
+
+// Returns just the distance portion from the encoded item
+func distFromItem(item uint64) float32 {
+	dist, _ := DecodeHeapItem(item)
+	return dist
 }
