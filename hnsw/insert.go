@@ -141,7 +141,7 @@ func (h *HNSW) updateBidirectionalConnections(q *structs.Node, neighbors []*stru
 		eConn := neighbor.Neighbors[level]
 
 		for _, n := range eConn {
-			dist := h.computeAndCacheDistance(neighbor.Vector, n)
+			dist := h.DistanceFunc(neighbor.Vector, n.Vector)
 			heap.Push(tmpHeap, structs.EncodeHeapItem(dist, n.ID))
 		}
 

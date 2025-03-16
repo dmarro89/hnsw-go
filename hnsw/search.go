@@ -52,7 +52,7 @@ func (h *HNSW) searchLayer(query []float32, entry *structs.Node, ef, level int) 
 	}()
 
 	// Initialize with the entry point
-	initialDist := h.computeAndCacheDistance(query, entry)
+	initialDist := h.DistanceFunc(query, entry.Vector)
 	item := structs.EncodeHeapItem(initialDist, entry.ID)
 	heap.Push(candidates, item)
 	heap.Push(nearest, item)
@@ -96,7 +96,7 @@ func (h *HNSW) searchLayer(query []float32, entry *structs.Node, ef, level int) 
 
 			// f ← get furthest element from W to q
 			// if distance(e, q) < distance(f, q) or │W│ < ef
-			dist := h.computeAndCacheDistance(query, neighbor)
+			dist := h.DistanceFunc(query, neighbor.Vector)
 			if dist < furthestDist || nearest.Len() < ef {
 				item := structs.EncodeHeapItem(dist, neighbor.ID)
 				// C ← C ⋃ e
@@ -120,7 +120,7 @@ func (h *HNSW) searchLayer(query []float32, entry *structs.Node, ef, level int) 
 // It's used primarily during the upper layer searches in the HNSW algorithm.
 func (h *HNSW) greedySearchLayer(query []float32, entry *structs.Node, level int) *structs.Node {
 	currentNode := entry
-	bestDist := h.computeAndCacheDistance(query, currentNode)
+	bestDist := h.DistanceFunc(query, currentNode.Vector)
 
 	for {
 		improved := false
@@ -128,7 +128,7 @@ func (h *HNSW) greedySearchLayer(query []float32, entry *structs.Node, level int
 		// Check all neighbors at this level
 		if level < len(currentNode.Neighbors) {
 			for _, neighbor := range currentNode.Neighbors[level] {
-				dist := h.computeAndCacheDistance(query, neighbor)
+				dist := h.DistanceFunc(query, neighbor.Vector)
 				if dist < bestDist {
 					bestDist = dist
 					currentNode = neighbor
