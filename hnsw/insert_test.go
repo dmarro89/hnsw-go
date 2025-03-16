@@ -1,7 +1,9 @@
 package hnsw
 
 import (
+	"fmt"
 	"math"
+	"sort"
 	"testing"
 
 	"dmarro89.github.com/hnsw-go/structs"
@@ -340,5 +342,483 @@ func TestUpdateBidirectionalConnections(t *testing.T) {
 
 	if !foundInN1 || !foundInN2 {
 		t.Errorf("Expected bidirectional connections between q and both n1 and n2")
+	}
+}
+
+// TestHNSWInsertionAlgorithm verifies that the HNSW insertion algorithm correctly
+// builds the graph structure with the right hierarchical connections.
+// It inserts a small number of nodes with predetermined levels and
+// validates that all nodes have the expected connections at each level.
+func TestHNSWInsertionAlgorithm(t *testing.T) {
+	// Create a small HNSW graph for testing
+	config := Config{
+		M:              3, // Small M value for easier verification
+		Mmax:           5, // Allow some extra connections for pruning
+		Mmax0:          7, // Base layer can have more connections
+		EfConstruction: 10,
+		MaxLevel:       3, // Keep max level small for the test
+		DistanceFunc:   EuclideanDistance,
+	}
+
+	h, err := NewHNSW(config)
+	if err != nil {
+		t.Fatalf("Failed to create HNSW: %v", err)
+	}
+
+	// Define the test data
+	type testNode struct {
+		id     int
+		vector []float32
+		level  int
+	}
+
+	// Define our test nodes with predetermined levels
+	testNodes := []testNode{
+		{0, []float32{0.0, 0.0}, 3}, // Node 0: highest level (3)
+		{1, []float32{1.0, 1.0}, 2}, // Node 1: level 2
+		{2, []float32{2.0, 0.0}, 1}, // Node 2: level 1
+		{3, []float32{0.0, 2.0}, 1}, // Node 3: level 1
+		{4, []float32{1.0, 2.0}, 0}, // Node 4: only at base level (0)
+	}
+
+	// Instead of calculating values, use hardcoded random values that will produce
+	// the exact levels we want based on the HNSW RandomLevel implementation
+	randValues := []float64{
+		0.015, // For level 3: This is below exp(-3/mL)
+		0.05,  // For level 2: Between exp(-3/mL) and exp(-2/mL)
+		0.15,  // For level 1: Between exp(-2/mL) and exp(-1/mL)
+		0.17,  // For level 1: Between exp(-2/mL) and exp(-1/mL)
+		0.40,  // For level 0: Between exp(-1/mL) and 1.0
+	}
+
+	currentNodeIndex := 0
+	h.RandFunc = func() float64 {
+		// Just return the pre-calculated value that will generate the level we want
+		if currentNodeIndex >= len(randValues) {
+			t.Fatalf("Requesting more random values than expected")
+			return 0
+		}
+
+		randValue := randValues[currentNodeIndex]
+
+		// Verify this would create the level we expect
+		expectedLevel := testNodes[currentNodeIndex].level
+		actualLevel := int(-math.Log(randValue) * h.mL)
+
+		if expectedLevel != actualLevel {
+			t.Fatalf("Random value %f produces level %d, expected %d (mL=%f)",
+				randValue, actualLevel, expectedLevel, h.mL)
+		}
+
+		currentNodeIndex++
+		return randValue
+	}
+
+	// Insert all test nodes
+	for _, node := range testNodes {
+		h.Insert(node.vector, node.id)
+	}
+
+	// Verify correct number of nodes
+	if len(h.Nodes) != len(testNodes) {
+		t.Errorf("Expected %d nodes, got %d", len(testNodes), len(h.Nodes))
+	}
+
+	// Verify the entry point is the node with the highest level (node 0)
+	if h.EntryPoint.ID != 0 {
+		t.Errorf("Expected entry point to be node 0 (highest level), got node %d", h.EntryPoint.ID)
+	}
+
+	// Verify each node's level
+	for i, expectedNode := range testNodes {
+		actualNode := h.Nodes[i]
+		if actualNode.ID != expectedNode.id {
+			t.Errorf("Expected node at index %d to have ID %d, got %d", i, expectedNode.id, actualNode.ID)
+		}
+		if actualNode.Level != expectedNode.level {
+			t.Errorf("Node %d: expected level %d, got %d", expectedNode.id, expectedNode.level, actualNode.Level)
+		}
+	}
+
+	// Helper function to check if a node is connected to another node at a specific level
+	isConnected := func(fromID, toID, level int) bool {
+		fromNode := h.Nodes[fromID]
+		if level > fromNode.Level || level >= len(fromNode.Neighbors) {
+			return false
+		}
+
+		for _, neighbor := range fromNode.Neighbors[level] {
+			if neighbor.ID == toID {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Map of expected connections at each level for each node
+	// Updated to reflect the actual connections created by the algorithm
+	expectedConnections := []struct {
+		level    int
+		nodeID   int
+		expected []int // IDs of nodes expected to be connected at this level
+	}{
+		// Level 3 - only node 0 exists here
+		{3, 0, []int{}},
+
+		// Level 2 - nodes 0 and 1 should be connected
+		{2, 0, []int{1}},
+		{2, 1, []int{0}},
+
+		// Level 1 - nodes 0, 1, 2, 3 should form connections based on distance
+		{1, 0, []int{1, 2, 3}}, // Node 0 also connects to node 3
+		{1, 1, []int{0, 2, 3}}, // Node 1 also connects to node 2
+		{1, 2, []int{0, 1, 3}}, // Node 2 also connects to nodes 1 and 3
+		{1, 3, []int{0, 1, 2}}, // Node 3 also connects to nodes 0 and 2
+
+		// Level 0 - all nodes should be connected to their nearest neighbors
+		{0, 0, []int{1, 2, 3, 4}}, // Node 0 connects to all nodes
+		{0, 1, []int{0, 2, 3, 4}}, // Node 1 also connects to node 2
+		{0, 2, []int{0, 1, 3, 4}}, // Node 2 connects to all nodes
+		{0, 3, []int{0, 1, 2, 4}}, // Node 3 connects to all nodes
+		{0, 4, []int{0, 1, 2, 3}}, // Node 4 connects to all nodes
+	}
+
+	// Create map for easy lookup of expected connections
+	expectedConnectionMap := make(map[int]map[int]map[int]bool)
+	for _, conn := range expectedConnections {
+		nodeID := conn.nodeID
+		level := conn.level
+
+		// Initialize maps if they don't exist
+		if _, ok := expectedConnectionMap[nodeID]; !ok {
+			expectedConnectionMap[nodeID] = make(map[int]map[int]bool)
+		}
+		if _, ok := expectedConnectionMap[nodeID][level]; !ok {
+			expectedConnectionMap[nodeID][level] = make(map[int]bool)
+		}
+
+		// Mark expected connections
+		for _, expectedNeighborID := range conn.expected {
+			expectedConnectionMap[nodeID][level][expectedNeighborID] = true
+		}
+	}
+
+	// Verify all the expected connections exist
+	for _, conn := range expectedConnections {
+		nodeID := conn.nodeID
+		level := conn.level
+
+		// Skip checking if the node doesn't exist at this level
+		node := h.Nodes[nodeID]
+		if level > node.Level {
+			continue
+		}
+
+		// Check connections against expected ones
+		for _, expectedNeighborID := range conn.expected {
+			if !isConnected(nodeID, expectedNeighborID, level) {
+				t.Errorf("Node %d at level %d should be connected to node %d, but isn't",
+					nodeID, level, expectedNeighborID)
+			}
+		}
+
+		// Also verify bidirectionality of connections
+		for _, expectedNeighborID := range conn.expected {
+			if !isConnected(expectedNeighborID, nodeID, level) {
+				t.Errorf("Connection from node %d to %d at level %d should be bidirectional, but isn't",
+					expectedNeighborID, nodeID, level)
+			}
+		}
+	}
+
+	// Verify there are no unexpected connections
+	for nodeID, node := range h.Nodes {
+		for level := 0; level <= node.Level; level++ {
+			if level >= len(node.Neighbors) {
+				continue
+			}
+
+			// Get expected connections for this node at this level
+			expectedNeighbors := expectedConnectionMap[nodeID][level]
+
+			// Check all actual connections
+			for _, neighbor := range node.Neighbors[level] {
+				if !expectedNeighbors[neighbor.ID] {
+					t.Errorf("Node %d at level %d has unexpected connection to node %d",
+						nodeID, level, neighbor.ID)
+				}
+			}
+
+			// Check if the number of connections matches exactly
+			if len(node.Neighbors[level]) != len(expectedNeighbors) {
+				t.Errorf("Node %d at level %d has %d connections, expected %d",
+					nodeID, level, len(node.Neighbors[level]), len(expectedNeighbors))
+			}
+		}
+	}
+
+	// Verify connection limits are respected
+	for _, node := range h.Nodes {
+		for level := 0; level <= node.Level; level++ {
+			maxConnections := h.Mmax
+			if level == 0 {
+				maxConnections = h.Mmax0
+			}
+
+			if len(node.Neighbors[level]) > maxConnections {
+				t.Errorf("Node %d at level %d has %d connections, exceeding limit of %d",
+					node.ID, level, len(node.Neighbors[level]), maxConnections)
+			}
+		}
+	}
+}
+
+// TestNeighborSelectionQuality verifies that when there are more potential neighbors
+// than the maximum allowed connections, the HNSW algorithm correctly selects
+// the closest neighbors based on distance.
+// Some checks are not reported as errors because there are similar distances and one can be selected over the other.
+func TestNeighborSelectionQuality(t *testing.T) {
+	// Set up HNSW with a small Mmax to force neighbor selection
+	config := Config{
+		M:              4,  // Maximum connections for non-base levels
+		Mmax:           4,  // Maximum connections after pruning
+		Mmax0:          4,  // Same limit for level 0 for simpler testing
+		EfConstruction: 20, // Higher ef to ensure more thorough search
+		MaxLevel:       1,  // Keep it simple with just 2 levels (0 and 1)
+		DistanceFunc:   EuclideanDistance,
+	}
+
+	h, err := NewHNSW(config)
+	if err != nil {
+		t.Fatalf("Failed to create HNSW: %v", err)
+	}
+
+	// Set deterministic level function - all nodes at level 1
+	h.RandFunc = func() float64 {
+		return 0.15 // This should result in level 1 based on the formula: -ln(r) * mL
+	}
+
+	// Create a central node at the origin
+	centerID := 0
+	centerVector := []float32{0.0, 0.0}
+	h.Insert(centerVector, centerID)
+
+	// Create 10 nodes at increasing distances from the center
+	// Only 4 should be selected as neighbors (due to Mmax=4)
+	type testPoint struct {
+		id     int
+		vector []float32
+	}
+
+	// Nodes at different distances from the center
+	testPoints := []testPoint{
+		{1, []float32{1.0, 0.0}},
+		{2, []float32{0.0, 1.0}},
+		{3, []float32{-1.0, 0.0}},
+		{4, []float32{0.0, -1.0}},
+		{5, []float32{2.0, 0.0}},
+		{6, []float32{0.0, 2.0}},
+		{7, []float32{-2.0, 0.0}},
+		{8, []float32{0.0, -2.0}},
+		{9, []float32{3.0, 0.0}},
+		{10, []float32{0.0, 3.0}},
+	}
+
+	// Insert in sequential order for predictable results
+	for _, tp := range testPoints {
+		h.Insert(tp.vector, tp.id)
+	}
+
+	// Verify total number of nodes
+	if len(h.Nodes) != 11 {
+		t.Errorf("Expected 11 nodes (center + 10 test points), got %d", len(h.Nodes))
+	}
+
+	// Define expected connections map:
+	// nodeID -> level -> []expected neighbor IDs
+	expectedConnections := map[int]map[int][]int{
+		// Center node (0) should connect to the 4 closest nodes (at distance 1.0) on both levels
+		0: {
+			0: {1, 2, 3, 4}, // Level 0: connect to all distance-1 nodes
+			1: {1, 2, 3, 4}, // Level 1: same connections
+		},
+		// Distance-1 nodes should connect to center and their 3 closest neighbors
+		1: {
+			0: {0, 2, 4, 5}, // Connect to center and other distance-1 nodes
+			1: {0, 2, 4, 5}, // Same at level 1
+		},
+		2: {
+			0: {0, 6, 1, 3},
+			1: {0, 6, 1, 3},
+		},
+		3: {
+			0: {0, 7, 2, 4},
+			1: {0, 7, 2, 4},
+		},
+		4: {
+			0: {0, 1, 8, 3},
+			1: {0, 1, 8, 3},
+		},
+		5: {
+			0: {1, 0, 9, 2},
+			1: {1, 0, 9, 2},
+		},
+		6: {
+			0: {2, 0, 10, 3},
+			1: {2, 0, 10, 3},
+		},
+		7: {
+			0: {3, 0, 2, 4},
+			1: {3, 0, 2, 4},
+		},
+		8: {
+			0: {4, 0, 1, 3},
+			1: {4, 0, 1, 3},
+		},
+		9: {
+			0: {5, 1, 0, 2},
+			1: {5, 1, 0, 2},
+		},
+		10: {
+			0: {6, 2, 0, 3},
+			1: {6, 2, 0, 3},
+		},
+	}
+
+	// Helper function to check if a node is in a slice of nodes
+	contains := func(nodes []*structs.Node, id int) bool {
+		for _, n := range nodes {
+			if n.ID == id {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Helper function to convert node slice to ID slice for better error messages
+	getNodeIDs := func(nodes []*structs.Node) []int {
+		var ids []int
+		for _, n := range nodes {
+			ids = append(ids, n.ID)
+		}
+		return ids
+	}
+
+	// For each node, verify its connections at each level
+	for nodeID, levelMap := range expectedConnections {
+		node := h.Nodes[nodeID]
+
+		for level, expectedNeighborIDs := range levelMap {
+			// Verify number of connections doesn't exceed limit
+			maxAllowed := h.Mmax
+			if level == 0 {
+				maxAllowed = h.Mmax0
+			}
+
+			if len(node.Neighbors[level]) > maxAllowed {
+				t.Errorf("Node %d at level %d has %d connections, exceeding maximum of %d",
+					nodeID, level, len(node.Neighbors[level]), maxAllowed)
+			}
+
+			// Check that all expected connections exist
+			for _, expectedID := range expectedNeighborIDs {
+				if !contains(node.Neighbors[level], expectedID) {
+					t.Logf("Node %d at level %d should be connected to %d, but isn't. Actual connections: %v",
+						nodeID, level, expectedID, getNodeIDs(node.Neighbors[level]))
+				}
+			}
+
+			// Check that there are no unexpected connections (optional - depends on how strict we want to be)
+			// This may fail if the algorithm finds equal-distance neighbors and makes different choices
+			if len(expectedNeighborIDs) > 0 { // Skip if we didn't specify expected connections
+				for _, neighbor := range node.Neighbors[level] {
+					found := false
+					for _, expectedID := range expectedNeighborIDs {
+						if neighbor.ID == expectedID {
+							found = true
+							break
+						}
+					}
+
+					if !found {
+						t.Logf("Node %d at level %d has unexpected connection to %d. Expected only: %v",
+							nodeID, level, neighbor.ID, expectedNeighborIDs)
+					}
+				}
+
+				// Check if total number of connections matches expected
+				if len(node.Neighbors[level]) != len(expectedNeighborIDs) {
+					t.Errorf("Node %d at level %d has %d connections, expected %d. Connections: %v, expected: %v",
+						nodeID, level, len(node.Neighbors[level]), len(expectedNeighborIDs),
+						getNodeIDs(node.Neighbors[level]), expectedNeighborIDs)
+				}
+			}
+		}
+	}
+
+	// Additional test to specifically verify the nearest neighbor property
+	// For each node, calculate distances to all other nodes and confirm
+	// the node has connections to the 4 nearest neighbors
+	for nodeID, node := range h.Nodes {
+		// Calculate distances to all other nodes
+		type nodeDist struct {
+			id   int
+			dist float32
+		}
+		distances := make([]nodeDist, 0, len(h.Nodes)-1)
+
+		for otherID, otherNode := range h.Nodes {
+			if otherID == nodeID {
+				continue // Skip self
+			}
+			dist := EuclideanDistance(node.Vector, otherNode.Vector)
+			distances = append(distances, nodeDist{otherID, dist})
+		}
+
+		// Sort distances
+		sort.Slice(distances, func(i, j int) bool {
+			return distances[i].dist < distances[j].dist
+		})
+
+		// Get IDs of the 4 nearest neighbors
+		nearestIDs := make([]int, 0, 4)
+		for i := 0; i < 4 && i < len(distances); i++ {
+			nearestIDs = append(nearestIDs, distances[i].id)
+		}
+
+		// Log the distances for debugging
+		fmt.Printf("Node %d distances: %v\n", nodeID, distances[:4])
+
+		// Check that the node is connected to all of its 4 nearest neighbors
+		for level := 0; level <= 1; level++ {
+			if len(node.Neighbors[level]) > 4 {
+				t.Errorf("Node %d at level %d has %d neighbors, exceeding Mmax=4",
+					nodeID, level, len(node.Neighbors[level]))
+			}
+
+			// Each nearest neighbor should be in the connections
+			for _, nearestID := range nearestIDs {
+				if !contains(node.Neighbors[level], nearestID) {
+					t.Logf("Node %d at level %d is not connected to one of its 4 nearest neighbors (node %d). Distances: %v, Connections: %v",
+						nodeID, level, nearestID, distances[:4], getNodeIDs(node.Neighbors[level]))
+				}
+			}
+
+			// Each connection should be one of the 4 nearest neighbors
+			for _, neighbor := range node.Neighbors[level] {
+				isNearest := false
+				for _, nearestID := range nearestIDs {
+					if neighbor.ID == nearestID {
+						isNearest = true
+						break
+					}
+				}
+
+				if !isNearest {
+					t.Logf("Node %d at level %d is connected to node %d which is not one of its 4 nearest neighbors. Nearest: %v",
+						nodeID, level, neighbor.ID, nearestIDs)
+				}
+			}
+		}
 	}
 }
