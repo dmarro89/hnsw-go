@@ -612,16 +612,16 @@ func TestNeighborSelectionQuality(t *testing.T) {
 
 	// Nodes at different distances from the center
 	testPoints := []testPoint{
-		{1, []float32{1.0, 0.0}},
-		{2, []float32{0.0, 1.0}},
-		{3, []float32{-1.0, 0.0}},
-		{4, []float32{0.0, -1.0}},
-		{5, []float32{2.0, 0.0}},
-		{6, []float32{0.0, 2.0}},
-		{7, []float32{-2.0, 0.0}},
-		{8, []float32{0.0, -2.0}},
-		{9, []float32{3.0, 0.0}},
-		{10, []float32{0.0, 3.0}},
+		{1, []float32{1.0, 0.0}},  // Distance 1.0
+		{2, []float32{0.0, 1.2}},  // Distance 1.2
+		{3, []float32{-1.4, 0.0}}, // Distance 1.4
+		{4, []float32{0.0, -1.6}}, // Distance 1.6
+		{5, []float32{1.8, 0.0}},  // Distance 1.8
+		{6, []float32{0.0, 2.0}},  // Distance 2.0
+		{7, []float32{-2.2, 0.0}}, // Distance 2.2
+		{8, []float32{0.0, -2.4}}, // Distance 2.4
+		{9, []float32{2.6, 0.0}},  // Distance 2.6
+		{10, []float32{0.0, 2.8}}, // Distance 2.8
 	}
 
 	// Insert in sequential order for predictable results
@@ -637,35 +637,35 @@ func TestNeighborSelectionQuality(t *testing.T) {
 	// Define expected connections map:
 	// nodeID -> level -> []expected neighbor IDs
 	expectedConnections := map[int]map[int][]int{
-		// Center node (0) should connect to the 4 closest nodes (at distance 1.0) on both levels
+		// Center node (0) should connect to the 4 closest nodes on both levels
 		0: {
-			0: {1, 2, 3, 4}, // Level 0: connect to all distance-1 nodes
+			0: {1, 2, 3, 4}, // Level 0: connect to 4 closest nodes
 			1: {1, 2, 3, 4}, // Level 1: same connections
 		},
-		// Distance-1 nodes should connect to center and their 3 closest neighbors
+		// Each node connects to its 4 closest neighbors
 		1: {
-			0: {0, 2, 4, 5}, // Connect to center and other distance-1 nodes
-			1: {0, 2, 4, 5}, // Same at level 1
+			0: {0, 2, 5, 9}, // Node 1 connections sorted by distance
+			1: {0, 2, 5, 9},
 		},
 		2: {
-			0: {0, 6, 1, 3},
-			1: {0, 6, 1, 3},
+			0: {0, 1, 6, 10},
+			1: {0, 1, 6, 10},
 		},
 		3: {
-			0: {0, 7, 2, 4},
-			1: {0, 7, 2, 4},
+			0: {0, 4, 2, 7},
+			1: {0, 4, 2, 7},
 		},
 		4: {
-			0: {0, 1, 8, 3},
-			1: {0, 1, 8, 3},
+			0: {0, 1, 3, 8},
+			1: {0, 1, 3, 8},
 		},
 		5: {
 			0: {1, 0, 9, 2},
 			1: {1, 0, 9, 2},
 		},
 		6: {
-			0: {2, 0, 10, 3},
-			1: {2, 0, 10, 3},
+			0: {2, 0, 10, 1},
+			1: {2, 0, 10, 1},
 		},
 		7: {
 			0: {3, 0, 2, 4},
@@ -680,8 +680,8 @@ func TestNeighborSelectionQuality(t *testing.T) {
 			1: {5, 1, 0, 2},
 		},
 		10: {
-			0: {6, 2, 0, 3},
-			1: {6, 2, 0, 3},
+			0: {6, 2, 1, 0},
+			1: {6, 2, 1, 0},
 		},
 	}
 
@@ -723,7 +723,7 @@ func TestNeighborSelectionQuality(t *testing.T) {
 			// Check that all expected connections exist
 			for _, expectedID := range expectedNeighborIDs {
 				if !contains(node.Neighbors[level], expectedID) {
-					t.Logf("Node %d at level %d should be connected to %d, but isn't. Actual connections: %v",
+					t.Errorf("Node %d at level %d should be connected to %d, but isn't. Actual connections: %v",
 						nodeID, level, expectedID, getNodeIDs(node.Neighbors[level]))
 				}
 			}
@@ -741,7 +741,7 @@ func TestNeighborSelectionQuality(t *testing.T) {
 					}
 
 					if !found {
-						t.Logf("Node %d at level %d has unexpected connection to %d. Expected only: %v",
+						t.Errorf("Node %d at level %d has unexpected connection to %d. Expected only: %v",
 							nodeID, level, neighbor.ID, expectedNeighborIDs)
 					}
 				}
@@ -799,7 +799,7 @@ func TestNeighborSelectionQuality(t *testing.T) {
 			// Each nearest neighbor should be in the connections
 			for _, nearestID := range nearestIDs {
 				if !contains(node.Neighbors[level], nearestID) {
-					t.Logf("Node %d at level %d is not connected to one of its 4 nearest neighbors (node %d). Distances: %v, Connections: %v",
+					t.Errorf("Node %d at level %d is not connected to one of its 4 nearest neighbors (node %d). Distances: %v, Connections: %v",
 						nodeID, level, nearestID, distances[:4], getNodeIDs(node.Neighbors[level]))
 				}
 			}
@@ -815,7 +815,7 @@ func TestNeighborSelectionQuality(t *testing.T) {
 				}
 
 				if !isNearest {
-					t.Logf("Node %d at level %d is connected to node %d which is not one of its 4 nearest neighbors. Nearest: %v",
+					t.Errorf("Node %d at level %d is connected to node %d which is not one of its 4 nearest neighbors. Nearest: %v",
 						nodeID, level, neighbor.ID, nearestIDs)
 				}
 			}
