@@ -196,7 +196,7 @@ func TestSimpleSelectNeighbors(t *testing.T) {
 	}
 
 	for _, item := range items {
-		heap.Push(candidates, structs.EncodeHeapItem(item.distance, item.id))
+		heap.Push(candidates, structs.NewNodeHeap(item.distance, item.id))
 	}
 
 	// Select top 3 neighbors

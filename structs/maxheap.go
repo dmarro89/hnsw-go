@@ -1,16 +1,13 @@
 package structs
 
-import "math"
-
 // MaxHeap represents a binary heap where the largest element is at the root.
 // It stores distances and IDs encoded as uint64 values for efficient memory usage
 // and comparison operations.
-type MaxHeap []uint64
+type MaxHeap []*NodeHeap
 
 // NewMaxHeap creates a new MaxHeap with an initial capacity of 64 elements.
 func NewMaxHeap() *MaxHeap {
-	h := MaxHeap(make([]uint64, 0, 64))
-	return &h
+	return &MaxHeap{}
 }
 
 // Len returns the number of elements in the heap.
@@ -18,14 +15,14 @@ func (h MaxHeap) Len() int { return len(h) }
 
 // Less reports whether the element with index i should sort before the element with index j.
 // For MaxHeap, larger values have higher priority.
-func (h MaxHeap) Less(i, j int) bool { return distFromItem(h[i]) > distFromItem(h[j]) }
+func (h MaxHeap) Less(i, j int) bool { return h[i].Dist > h[j].Dist }
 
 // Swap exchanges the elements with indexes i and j.
 func (h MaxHeap) Swap(i, j int) { h[i], h[j] = h[j], h[i] }
 
 // Push adds x as element Len(). The complexity is O(log n) where n = h.Len().
 func (h *MaxHeap) Push(x interface{}) {
-	*h = append(*h, x.(uint64))
+	*h = append(*h, x.(*NodeHeap))
 }
 
 // Pop removes and returns the maximum element (according to Less) from the heap.
@@ -45,15 +42,9 @@ func (h *MaxHeap) Reset() {
 
 // Peek returns the maximum element without removing it from the heap.
 // If the heap is empty, returns MaxUint64.
-func (h MaxHeap) Peek() uint64 {
+func (h MaxHeap) Peek() *NodeHeap {
 	if len(h) == 0 {
-		return math.MaxUint64
+		return nil
 	}
 	return h[0]
-}
-
-// Returns just the distance portion from the encoded item
-func distFromItem(item uint64) float32 {
-	dist, _ := DecodeHeapItem(item)
-	return dist
 }

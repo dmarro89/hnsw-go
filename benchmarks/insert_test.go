@@ -14,9 +14,9 @@ func BenchmarkHNSWConstruction(b *testing.B) {
 		numVecs   int
 		dimension int
 	}{
-		{"small", 100, 128},
-		{"medium", 1000, 128},
-		{"large", 10000, 128},
+		{"small", 1000, 128},
+		{"medium", 10000, 128},
+		{"large", 100000, 128},
 	}
 
 	for _, cfg := range configs {
@@ -32,7 +32,7 @@ func BenchmarkHNSWConstruction(b *testing.B) {
 					M:              16,
 					Mmax:           8,
 					Mmax0:          16,
-					EfConstruction: 200,
+					EfConstruction: 100,
 					MaxLevel:       16,
 					DistanceFunc:   hnsw.EuclideanDistance,
 				})

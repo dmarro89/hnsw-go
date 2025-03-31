@@ -44,9 +44,6 @@ type HNSW struct {
 	// EntryPoint is the highest-level node in the graph
 	EntryPoint *structs.Node
 
-	// globalDistanceCache caches distance calculations
-	globalDistanceCache *distanceCache
-
 	// heapPool manages heap objects for reuse
 	heapPool *structs.HeapPoolManager
 
@@ -97,16 +94,15 @@ func NewHNSW(cfg Config) (*HNSW, error) {
 	}
 
 	h := &HNSW{
-		M:                   cfg.M,
-		Mmax:                cfg.Mmax,
-		Mmax0:               cfg.Mmax0,
-		mL:                  1 / math.Log(float64(cfg.M)),
-		EfConstruction:      cfg.EfConstruction,
-		MaxLevel:            cfg.MaxLevel,
-		DistanceFunc:        cfg.DistanceFunc,
-		RandFunc:            rand.Float64,
-		heapPool:            structs.NewHeapPoolManager(),
-		globalDistanceCache: newDistanceCache(),
+		M:              cfg.M,
+		Mmax:           cfg.Mmax,
+		Mmax0:          cfg.Mmax0,
+		mL:             1 / math.Log(float64(cfg.M)),
+		EfConstruction: cfg.EfConstruction,
+		MaxLevel:       cfg.MaxLevel,
+		DistanceFunc:   cfg.DistanceFunc,
+		RandFunc:       rand.Float64,
+		heapPool:       structs.NewHeapPoolManager(),
 		visitedPool: sync.Pool{New: func() interface{} {
 			return make(map[int]struct{}, 64)
 		}},

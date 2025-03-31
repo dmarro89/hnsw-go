@@ -92,8 +92,8 @@ func (h *HNSW) Insert(vector []float32, id int) {
 
 		// ep ← W
 		if W.Len() > 0 {
-			item := heap.Pop(W).(uint64)
-			_, itemID := structs.DecodeHeapItem(item)
+			item := heap.Pop(W).(*structs.NodeHeap)
+			itemID := item.Id
 			ep = h.Nodes[itemID]
 		}
 	}
@@ -142,7 +142,7 @@ func (h *HNSW) updateBidirectionalConnections(q *structs.Node, neighbors []*stru
 
 		for _, n := range eConn {
 			dist := h.DistanceFunc(neighbor.Vector, n.Vector)
-			heap.Push(tmpHeap, structs.EncodeHeapItem(dist, n.ID))
+			heap.Push(tmpHeap, structs.NewNodeHeap(dist, n.ID))
 		}
 
 		// Shrink the neighborhood if it exceeds the allowed limit.

@@ -35,11 +35,14 @@ Space Complexity: O(ef + N) where N is the number of visited nodes
 Note: For ef=1, it automatically switches to a more efficient greedy search strategy.
 */
 func (h *HNSW) searchLayer(query []float32, entry *structs.Node, ef, level int) *structs.MaxHeap {
+	distFunc := h.DistanceFunc
+
 	//v ← ep  set of visited elements
-	visited := h.visitedPool.Get().(map[int]struct{})
-	for k := range visited {
-		delete(visited, k)
-	}
+	visited := make([]bool, len(h.Nodes))
+	// visited := h.visitedPool.Get().(map[int]struct{})
+	// for k := range visited {
+	// 	delete(visited, k)
+	// }
 
 	//C ← ep set of candidates
 	candidates := h.heapPool.GetMinHeap()
@@ -52,11 +55,10 @@ func (h *HNSW) searchLayer(query []float32, entry *structs.Node, ef, level int) 
 	}()
 
 	// Initialize with the entry point
-	initialDist := h.DistanceFunc(query, entry.Vector)
-	item := structs.EncodeHeapItem(initialDist, entry.ID)
-	heap.Push(candidates, item)
-	heap.Push(nearest, item)
-	visited[entry.ID] = struct{}{}
+	initialDist := distFunc(query, entry.Vector)
+	heap.Push(candidates, structs.NewNodeHeap(initialDist, entry.ID))
+	heap.Push(nearest, structs.NewNodeHeap(initialDist, entry.ID))
+	visited[entry.ID] = true
 
 	var (
 		currentDist float32
@@ -66,11 +68,12 @@ func (h *HNSW) searchLayer(query []float32, entry *structs.Node, ef, level int) 
 	// while │C│ > 0
 	for candidates.Len() > 0 {
 		// c ← extract nearest element from C to q
-		current := heap.Pop(candidates).(uint64)
-		currentDist, currentID = structs.DecodeHeapItem(current)
+		current := heap.Pop(candidates).(*structs.NodeHeap)
+		currentDist = current.Dist
+		currentID = current.Id
 		// f ← get furthest element from W to q
 		furthest := nearest.Peek()
-		furthestDist, _ := structs.DecodeHeapItem(furthest)
+		furthestDist := furthest.Dist
 
 		// if distance(c, q) > distance(f, q)
 		// break  -> all elements in W are evaluated
@@ -84,25 +87,23 @@ func (h *HNSW) searchLayer(query []float32, entry *structs.Node, ef, level int) 
 			continue
 		}
 
-		neighbors := currentNode.Neighbors[level]
 		// for each e ∈ neighbourhood(c) at layer lc
-		for _, neighbor := range neighbors {
+		for _, neighbor := range currentNode.Neighbors[level] {
 			// if e ∉ v
 			// v ← v ⋃ e
-			if _, seen := visited[neighbor.ID]; seen {
+			if visited[neighbor.ID] {
 				continue
 			}
-			visited[neighbor.ID] = struct{}{}
+			visited[neighbor.ID] = true
 
 			// f ← get furthest element from W to q
 			// if distance(e, q) < distance(f, q) or │W│ < ef
-			dist := h.DistanceFunc(query, neighbor.Vector)
+			dist := distFunc(query, neighbor.Vector)
 			if dist < furthestDist || nearest.Len() < ef {
-				item := structs.EncodeHeapItem(dist, neighbor.ID)
 				// C ← C ⋃ e
-				heap.Push(candidates, item)
+				heap.Push(candidates, structs.NewNodeHeap(dist, neighbor.ID))
 				// W ← W ⋃ e
-				heap.Push(nearest, item)
+				heap.Push(nearest, structs.NewNodeHeap(dist, neighbor.ID))
 				// if │W│ > ef
 				// remove furthest element from W to q
 				if nearest.Len() > ef {
@@ -197,6 +198,7 @@ func (h *HNSW) KNN_Search(query []float32, K, ef int) []*structs.Node {
 
 	// Perform beam search at level 0 with ef size.
 	// W ← SEARCH-LAYER(q, ep, ef, lc=0)
+
 	candidates := h.searchLayer(query, entry, ef, 0)
 
 	// Extract the top K nearest elements from W.
@@ -204,9 +206,8 @@ func (h *HNSW) KNN_Search(query []float32, K, ef int) []*structs.Node {
 	results := make([]*structs.Node, 0, K)
 
 	for candidates.Len() > 0 && len(results) < K {
-		item := heap.Pop(candidates).(uint64)
-		_, itemID := structs.DecodeHeapItem(item)
-		results = append(results, h.Nodes[itemID])
+		item := heap.Pop(candidates).(*structs.NodeHeap)
+		results = append(results, h.Nodes[item.Id])
 	}
 
 	return results
@@ -222,9 +223,8 @@ func (h *HNSW) simpleSelectNeighbors(candidates *structs.MinHeap, M int) []*stru
 
 	// Extract the top M elements from the MinHeap
 	for candidates.Len() > 0 && len(neighbors) < M {
-		item := heap.Pop(candidates).(uint64)
-		_, itemID := structs.DecodeHeapItem(item)
-
+		item := heap.Pop(candidates).(*structs.NodeHeap)
+		itemID := item.Id
 		if itemID > len(h.Nodes) || h.Nodes[itemID] == nil {
 			continue
 		}

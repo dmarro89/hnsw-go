@@ -46,7 +46,7 @@ func TestMinHeap(t *testing.T) {
 			h := NewMinHeap()
 
 			for _, item := range tt.items {
-				heap.Push(h, EncodeHeapItem(item[0], int(item[1])))
+				heap.Push(h, NewNodeHeap(item[0], int(item[1])))
 			}
 
 			if h.Len() != len(tt.items) {
@@ -57,10 +57,9 @@ func TestMinHeap(t *testing.T) {
 				if h.Len() == 0 {
 					t.Fatalf("heap empty, but expected more items")
 				}
-				item := heap.Pop(h).(uint64)
-				dist, _ := DecodeHeapItem(item)
-				if math.Abs(float64(dist-want)) > 0 {
-					t.Errorf("item %d = %f, want %f", i, dist, want)
+				item := heap.Pop(h).(*NodeHeap)
+				if math.Abs(float64(item.Dist-want)) > 0 {
+					t.Errorf("item %d = %f, want %f", i, item.Dist, want)
 				}
 			}
 		})
@@ -81,14 +80,13 @@ func TestHeapItemEncoding(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		encoded := EncodeHeapItem(tt.dist, tt.id)
-		gotDist, gotID := DecodeHeapItem(encoded)
+		encoded := NewNodeHeap(tt.dist, tt.id)
 
-		if math.Abs(float64(gotDist-tt.wantDist)) > 0 {
-			t.Errorf("distance = %f, want %f", gotDist, tt.wantDist)
+		if math.Abs(float64(encoded.Dist-tt.wantDist)) > 0 {
+			t.Errorf("distance = %f, want %f", encoded.Dist, tt.wantDist)
 		}
-		if gotID != tt.wantID {
-			t.Errorf("id = %d, want %d", gotID, tt.wantID)
+		if encoded.Id != tt.wantID {
+			t.Errorf("id = %d, want %d", encoded.Id, tt.wantID)
 		}
 	}
 }
@@ -172,7 +170,7 @@ func TestMinHeapOrdering(t *testing.T) {
 
 			// Insert all elements into the heap
 			for _, item := range tt.items {
-				encoded := EncodeHeapItem(item[0], int(item[1]))
+				encoded := NewNodeHeap(item[0], int(item[1]))
 				heap.Push(h, encoded)
 			}
 
@@ -186,10 +184,9 @@ func TestMinHeapOrdering(t *testing.T) {
 			gotIDs := make([]int, 0, len(tt.items))
 
 			for h.Len() > 0 {
-				item := heap.Pop(h).(uint64)
-				dist, id := DecodeHeapItem(item)
-				gotOrder = append(gotOrder, dist)
-				gotIDs = append(gotIDs, id)
+				item := heap.Pop(h).(*NodeHeap)
+				gotOrder = append(gotOrder, item.Dist)
+				gotIDs = append(gotIDs, item.Id)
 			}
 
 			// Verify that the order of distances matches the expected order
@@ -223,8 +220,8 @@ func TestMinHeapWithRealEncoding(t *testing.T) {
 
 	// Insert elements with real uint64 encoding
 	for _, item := range items {
-		encoded := EncodeHeapItem(item[0], int(item[1]))
-		t.Logf("Distance %.2f, ID %d -> encoded: %d", item[0], int(item[1]), encoded)
+		encoded := NewNodeHeap(item[0], int(item[1]))
+		t.Logf("Distance %.2f, ID %d -> encoded: %v", item[0], int(item[1]), encoded)
 		heap.Push(h, encoded)
 	}
 
@@ -238,17 +235,16 @@ func TestMinHeapWithRealEncoding(t *testing.T) {
 			t.Fatalf("MinHeap empty before extracting all elements")
 		}
 
-		item := heap.Pop(h).(uint64)
-		dist, id := DecodeHeapItem(item)
+		item := heap.Pop(h).(*NodeHeap)
 
-		t.Logf("Pop %d: Got distance=%.2f, id=%d", i, dist, id)
+		t.Logf("Pop %d: Got distance=%.2f, id=%d", i, item.Dist, item.Id)
 
-		if dist != expectedDists[i] {
-			t.Errorf("Pop %d: distance = %v, want %v", i, dist, expectedDists[i])
+		if item.Dist != expectedDists[i] {
+			t.Errorf("Pop %d: distance = %v, want %v", i, item.Dist, expectedDists[i])
 		}
 
-		if id != expectedIDs[i] {
-			t.Errorf("Pop %d: id = %v, want %v", i, id, expectedIDs[i])
+		if item.Id != expectedIDs[i] {
+			t.Errorf("Pop %d: id = %v, want %v", i, item.Id, expectedIDs[i])
 		}
 	}
 }

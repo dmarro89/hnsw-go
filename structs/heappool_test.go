@@ -20,8 +20,8 @@ func TestHeapPoolManager_MinHeap(t *testing.T) {
 	t.Run("Get returns clean heap after Put", func(t *testing.T) {
 		// Get a heap and add some items
 		h1 := manager.GetMinHeap()
-		h1.Push(uint64(1))
-		h1.Push(uint64(2))
+		h1.Push(NewNodeHeap(1.0, 1))
+		h1.Push(NewNodeHeap(2.0, 2))
 
 		if h1.Len() != 2 {
 			t.Errorf("Expected length 2, got %d", h1.Len())
@@ -42,7 +42,7 @@ func TestHeapPoolManager_MinHeap(t *testing.T) {
 		// Get multiple heaps
 		for i := range heaps {
 			heaps[i] = manager.GetMinHeap()
-			heaps[i].Push(uint64(i))
+			heaps[i].Push(NewNodeHeap(float32(i), i))
 		}
 
 		// Put them back
@@ -76,8 +76,8 @@ func TestHeapPoolManager_MaxHeap(t *testing.T) {
 	t.Run("Get returns clean heap after Put", func(t *testing.T) {
 		// Get a heap and add some items
 		h1 := manager.GetMaxHeap()
-		h1.Push(uint64(1))
-		h1.Push(uint64(2))
+		h1.Push(NewNodeHeap(1.0, 1))
+		h1.Push(NewNodeHeap(2.0, 2))
 
 		if h1.Len() != 2 {
 			t.Errorf("Expected length 2, got %d", h1.Len())
@@ -98,7 +98,7 @@ func TestHeapPoolManager_MaxHeap(t *testing.T) {
 		// Get multiple heaps
 		for i := range heaps {
 			heaps[i] = manager.GetMaxHeap()
-			heaps[i].Push(uint64(i))
+			heaps[i].Push(NewNodeHeap(float32(i), i))
 		}
 
 		// Put them back
@@ -128,7 +128,7 @@ func TestHeapPoolManager_Concurrent(t *testing.T) {
 			go func() {
 				for j := 0; j < numOperations; j++ {
 					h := manager.GetMinHeap()
-					h.Push(uint64(j))
+					h.Push(NewNodeHeap(float32(j), j))
 					manager.PutMinHeap(h)
 				}
 				done <- true
@@ -148,7 +148,7 @@ func TestHeapPoolManager_Concurrent(t *testing.T) {
 			go func() {
 				for j := 0; j < numOperations; j++ {
 					h := manager.GetMaxHeap()
-					h.Push(uint64(j))
+					h.Push(NewNodeHeap(float32(j), j))
 					manager.PutMaxHeap(h)
 				}
 				done <- true
