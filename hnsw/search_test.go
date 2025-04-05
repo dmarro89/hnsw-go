@@ -1,7 +1,6 @@
 package hnsw
 
 import (
-	"container/heap"
 	"testing"
 
 	"dmarro89.github.com/hnsw-go/structs"
@@ -196,7 +195,7 @@ func TestSimpleSelectNeighbors(t *testing.T) {
 	}
 
 	for _, item := range items {
-		heap.Push(candidates, structs.NewNodeHeap(item.distance, item.id))
+		candidates.Push(structs.NewNodeHeap(item.distance, item.id))
 	}
 
 	// Select top 3 neighbors

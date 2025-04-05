@@ -1,8 +1,6 @@
 package hnsw
 
 import (
-	"container/heap"
-
 	"dmarro89.github.com/hnsw-go/structs"
 )
 
@@ -36,9 +34,9 @@ Note: For ef=1, it automatically switches to a more efficient greedy search stra
 */
 func (h *HNSW) searchLayer(query []float32, entry *structs.Node, ef, level int) *structs.MaxHeap {
 	distFunc := h.DistanceFunc
-
+	nodes := h.Nodes
 	//v ← ep  set of visited elements
-	visited := make([]bool, len(h.Nodes))
+	visited := make([]bool, len(nodes))
 	// visited := h.visitedPool.Get().(map[int]struct{})
 	// for k := range visited {
 	// 	delete(visited, k)
@@ -56,8 +54,8 @@ func (h *HNSW) searchLayer(query []float32, entry *structs.Node, ef, level int) 
 
 	// Initialize with the entry point
 	initialDist := distFunc(query, entry.Vector)
-	heap.Push(candidates, structs.NewNodeHeap(initialDist, entry.ID))
-	heap.Push(nearest, structs.NewNodeHeap(initialDist, entry.ID))
+	candidates.Push(structs.NewNodeHeap(initialDist, entry.ID))
+	nearest.Push(structs.NewNodeHeap(initialDist, entry.ID))
 	visited[entry.ID] = true
 
 	var (
@@ -68,7 +66,7 @@ func (h *HNSW) searchLayer(query []float32, entry *structs.Node, ef, level int) 
 	// while │C│ > 0
 	for candidates.Len() > 0 {
 		// c ← extract nearest element from C to q
-		current := heap.Pop(candidates).(*structs.NodeHeap)
+		current := candidates.Pop()
 		currentDist = current.Dist
 		currentID = current.Id
 		// f ← get furthest element from W to q
@@ -81,7 +79,7 @@ func (h *HNSW) searchLayer(query []float32, entry *structs.Node, ef, level int) 
 			break
 		}
 
-		currentNode := h.Nodes[currentID]
+		currentNode := nodes[currentID]
 
 		if currentNode == nil || level >= len(currentNode.Neighbors) || len(currentNode.Neighbors[level]) == 0 {
 			continue
@@ -101,13 +99,13 @@ func (h *HNSW) searchLayer(query []float32, entry *structs.Node, ef, level int) 
 			dist := distFunc(query, neighbor.Vector)
 			if dist < furthestDist || nearest.Len() < ef {
 				// C ← C ⋃ e
-				heap.Push(candidates, structs.NewNodeHeap(dist, neighbor.ID))
+				candidates.Push(structs.NewNodeHeap(dist, neighbor.ID))
 				// W ← W ⋃ e
-				heap.Push(nearest, structs.NewNodeHeap(dist, neighbor.ID))
+				nearest.Push(structs.NewNodeHeap(dist, neighbor.ID))
 				// if │W│ > ef
 				// remove furthest element from W to q
 				if nearest.Len() > ef {
-					heap.Pop(nearest)
+					nearest.Pop()
 				}
 			}
 		}
@@ -206,7 +204,7 @@ func (h *HNSW) KNN_Search(query []float32, K, ef int) []*structs.Node {
 	results := make([]*structs.Node, 0, K)
 
 	for candidates.Len() > 0 && len(results) < K {
-		item := heap.Pop(candidates).(*structs.NodeHeap)
+		item := candidates.Pop()
 		results = append(results, h.Nodes[item.Id])
 	}
 
@@ -223,7 +221,7 @@ func (h *HNSW) simpleSelectNeighbors(candidates *structs.MinHeap, M int) []*stru
 
 	// Extract the top M elements from the MinHeap
 	for candidates.Len() > 0 && len(neighbors) < M {
-		item := heap.Pop(candidates).(*structs.NodeHeap)
+		item := candidates.Pop()
 		itemID := item.Id
 		if itemID > len(h.Nodes) || h.Nodes[itemID] == nil {
 			continue

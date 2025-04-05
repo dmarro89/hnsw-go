@@ -1,8 +1,6 @@
 package structs
 
-import (
-	"testing"
-)
+import "testing"
 
 func TestHeapPoolManager_MinHeap(t *testing.T) {
 	manager := NewHeapPoolManager()

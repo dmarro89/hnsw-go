@@ -1,7 +1,6 @@
 package structs
 
 import (
-	"container/heap"
 	"math"
 	"testing"
 )
@@ -46,7 +45,7 @@ func TestMaxHeap(t *testing.T) {
 			h := NewMaxHeap()
 
 			for _, item := range tt.items {
-				heap.Push(h, NewNodeHeap(item[0], int(item[1])))
+				h.Push(NewNodeHeap(item[0], int(item[1])))
 			}
 
 			if h.Len() != len(tt.items) {
@@ -57,7 +56,7 @@ func TestMaxHeap(t *testing.T) {
 				if h.Len() == 0 {
 					t.Fatalf("heap empty, but expected more items")
 				}
-				item := heap.Pop(h).(*NodeHeap)
+				item := h.Pop()
 				if math.Abs(float64(item.Dist-want)) > 0 {
 					t.Errorf("item %d = %f, want %f", i, item.Dist, want)
 				}
@@ -100,7 +99,7 @@ func TestMaxHeapPeek(t *testing.T) {
 			h := NewMaxHeap()
 
 			for _, item := range tt.items {
-				heap.Push(h, NewNodeHeap(item[0], int(item[1])))
+				h.Push(NewNodeHeap(item[0], int(item[1])))
 			}
 
 			peek := h.Peek()
@@ -197,7 +196,7 @@ func TestMaxHeapOrdering(t *testing.T) {
 			// Insert all elements into the heap
 			for _, item := range tt.items {
 				encoded := NewNodeHeap(item[0], int(item[1]))
-				heap.Push(h, encoded)
+				h.Push(encoded)
 			}
 
 			// Verify the correct number of elements
@@ -210,7 +209,7 @@ func TestMaxHeapOrdering(t *testing.T) {
 			gotIDs := make([]int, 0, len(tt.items))
 
 			for h.Len() > 0 {
-				item := heap.Pop(h).(*NodeHeap)
+				item := h.Pop()
 				gotOrder = append(gotOrder, item.Dist)
 				gotIDs = append(gotIDs, item.Id)
 			}
@@ -248,7 +247,7 @@ func TestMaxHeapWithRealEncoding(t *testing.T) {
 	for _, item := range items {
 		encoded := NewNodeHeap(item[0], int(item[1]))
 		t.Logf("Distance %.2f, ID %d -> encoded: %v", item[0], int(item[1]), encoded)
-		heap.Push(h, encoded)
+		h.Push(encoded)
 	}
 
 	// Expected order is from largest to smallest (by distance)
@@ -261,7 +260,7 @@ func TestMaxHeapWithRealEncoding(t *testing.T) {
 			t.Fatalf("MaxHeap empty before extracting all elements")
 		}
 
-		item := heap.Pop(h).(*NodeHeap)
+		item := h.Pop()
 
 		t.Logf("Pop %d: Got distance=%.2f, id=%d", i, item.Dist, item.Id)
 
