@@ -37,10 +37,6 @@ func (h *HNSW) searchLayer(query []float32, entry *structs.Node, ef, level int) 
 	nodes := h.Nodes
 	//v ← ep  set of visited elements
 	visited := make([]bool, len(nodes))
-	// visited := h.visitedPool.Get().(map[int]struct{})
-	// for k := range visited {
-	// 	delete(visited, k)
-	// }
 
 	//C ← ep set of candidates
 	candidates := h.heapPool.GetMinHeap()
