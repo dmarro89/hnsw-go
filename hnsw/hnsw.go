@@ -47,8 +47,8 @@ type HNSW struct {
 	// heapPool manages heap objects for reuse
 	heapPool *structs.HeapPoolManager
 
-	// visitedPool manages visited sets for reuse
-	visitedPool sync.Pool
+	// nodeHeapPool manages node heap objects for reuse
+	nodeHeapPool *structs.NodeHeapPool
 
 	mutex sync.RWMutex
 }
@@ -103,9 +103,7 @@ func NewHNSW(cfg Config) (*HNSW, error) {
 		DistanceFunc:   cfg.DistanceFunc,
 		RandFunc:       rand.Float64,
 		heapPool:       structs.NewHeapPoolManager(),
-		visitedPool: sync.Pool{New: func() interface{} {
-			return make(map[int]struct{}, 64)
-		}},
+		nodeHeapPool:   structs.NewNodeHeapPool(),
 	}
 
 	return h, nil

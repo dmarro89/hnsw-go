@@ -1,17 +1,5 @@
 package structs
 
-type NodeHeap struct {
-	Dist float32
-	Id   int
-}
-
-func NewNodeHeap(dist float32, id int) *NodeHeap {
-	return &NodeHeap{
-		Dist: dist,
-		Id:   id,
-	}
-}
-
 // MinHeap keeps elements in ascending order (smallest on top).
 type MinHeap struct {
 	nodes []*NodeHeap
