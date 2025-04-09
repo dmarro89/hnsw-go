@@ -63,12 +63,11 @@ func (h *HNSW) Insert(vector []float32, id int) {
 		ep = newEp
 	}
 
-	// W ← MinHeap // list for the currently found nearest elements
-
 	// Phase 2: Connecting the new node at each layer from the minimum of (L, l) to the base layer (0).
 	// for lc ← min(L, l) … 0
 	maxLayer := int(math.Min(float64(L), float64(level)))
 	for lc := maxLayer; lc >= 0; lc-- {
+		// W ← list for the currently found nearest elements
 		// W ← SEARCH-LAYER(q, ep, efConstruction, lc)
 		nearestNeighbors := h.searchLayer(q.Vector, ep, h.EfConstruction, lc)
 
@@ -113,10 +112,10 @@ func (h *HNSW) updateBidirectionalConnections(q *structs.Node, neighbors []*stru
 	tmpHeap := h.heapPool.GetMinHeap()
 	defer h.heapPool.PutMinHeap(tmpHeap)
 
-	// Pre-allocazione dell'array di candidati da riutilizzare
-	// Stimiamo la dimensione massima necessaria (maxConn + 1 per aggiungere q)
+	// The maximum number of neighbors to consider for optimization
 	maxNeighborsCount := maxConn + 1
-	sharedCandidates := make([]*structs.Node, 0, maxNeighborsCount)
+	// Preallocate the slice for the candidates slice
+	candidates := make([]*structs.Node, 0, maxNeighborsCount)
 
 	// for each e ∈ neighbors
 	for _, neighbor := range neighbors {
@@ -134,8 +133,8 @@ func (h *HNSW) updateBidirectionalConnections(q *structs.Node, neighbors []*stru
 
 		// Optimize the neighbors' neighborhoods.
 		tmpHeap.Reset()
-		// Reset l'array condiviso senza deallocarlo
-		sharedCandidates = sharedCandidates[:0]
+		// Reset the candidates slice
+		candidates = candidates[:0]
 
 		// eConn ← neighborhood(neighbor) at layer level
 		eConn := neighbor.Neighbors[level]
@@ -145,16 +144,16 @@ func (h *HNSW) updateBidirectionalConnections(q *structs.Node, neighbors []*stru
 			tmpHeap.Push(structs.NewNodeHeap(dist, n.ID))
 		}
 
-		// Estrai gli elementi dalla heap
+		// Get the top neighbors
 		heapSize := tmpHeap.Len()
 		for i := 0; i < heapSize; i++ {
 			item := tmpHeap.Pop()
-			sharedCandidates = append(sharedCandidates, h.Nodes[item.Id])
+			candidates = append(candidates, h.Nodes[item.Id])
 		}
 
 		// Shrink the neighborhood if it exceeds the allowed limit.
 		// eNewConn ← SELECT-NEIGHBORS(e, eConn, Mmax, lc)
-		eNewConn := h.simpleSelectNeighbors(sharedCandidates, maxConn)
+		eNewConn := h.simpleSelectNeighbors(candidates, maxConn)
 		neighbor.Neighbors[level] = eNewConn
 	}
 }

@@ -208,11 +208,9 @@ func (h *HNSW) KNN_Search(query []float32, K, ef int) []*structs.Node {
 	return candidates[:K]
 }
 
-// simpleSelectNeighbors selects up to M closest neighbors from the candidates heap.
+// simpleSelectNeighbors selects up to M closest neighbors from the candidates slice.
 // This implements the basic neighbor selection strategy from the HNSW paper,
 // selecting the M closest elements based on distance.
-//
-// Note: The input heap is consumed during the process.
 func (h *HNSW) simpleSelectNeighbors(candidates []*structs.Node, M int) []*structs.Node {
 	limit := M
 	if len(candidates) < M {
