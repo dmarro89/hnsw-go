@@ -64,20 +64,13 @@ func (h *HNSW) Insert(vector []float32, id int) {
 	}
 
 	// W ← MinHeap // list for the currently found nearest elements
-	W := h.heapPool.GetMinHeap()
-	defer h.heapPool.PutMinHeap(W)
 
 	// Phase 2: Connecting the new node at each layer from the minimum of (L, l) to the base layer (0).
 	// for lc ← min(L, l) … 0
 	maxLayer := int(math.Min(float64(L), float64(level)))
 	for lc := maxLayer; lc >= 0; lc-- {
-		W.Reset()
-
 		// W ← SEARCH-LAYER(q, ep, efConstruction, lc)
 		nearestNeighbors := h.searchLayer(q.Vector, ep, h.EfConstruction, lc)
-		for nearestNeighbors.Len() > 0 {
-			W.Push(nearestNeighbors.Pop())
-		}
 
 		// Ensure that the number of connections does not exceed the allowed limit.
 		maxConn := h.Mmax
@@ -86,13 +79,13 @@ func (h *HNSW) Insert(vector []float32, id int) {
 		}
 
 		// neighbors ← SELECT-NEIGHBORS(q, W, M, lc)
-		neighbors := h.simpleSelectNeighbors(W, maxConn)
+		neighbors := h.simpleSelectNeighbors(nearestNeighbors, maxConn)
 		h.updateBidirectionalConnections(q, neighbors, lc, maxConn)
 
 		// ep ← W
-		if W.Len() > 0 {
-			item := W.Pop()
-			itemID := item.Id
+		if len(nearestNeighbors) > 0 {
+			item := nearestNeighbors[0]
+			itemID := item.ID
 			ep = h.Nodes[itemID]
 		}
 	}
@@ -144,9 +137,14 @@ func (h *HNSW) updateBidirectionalConnections(q *structs.Node, neighbors []*stru
 			tmpHeap.Push(structs.NewNodeHeap(dist, n.ID))
 		}
 
+		candidates := make([]*structs.Node, 0, tmpHeap.Len())
+		for i := 0; i < tmpHeap.Len(); i++ {
+			candidates = append(candidates, h.Nodes[tmpHeap.Pop().Id])
+		}
+
 		// Shrink the neighborhood if it exceeds the allowed limit.
 		// eNewConn ← SELECT-NEIGHBORS(e, eConn, Mmax, lc)
-		eNewConn := h.simpleSelectNeighbors(tmpHeap, maxConn)
+		eNewConn := h.simpleSelectNeighbors(candidates, maxConn)
 		neighbor.Neighbors[level] = eNewConn
 
 	}

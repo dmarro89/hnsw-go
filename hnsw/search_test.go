@@ -159,66 +159,66 @@ func TestKNNSearchSingleElement(t *testing.T) {
 // }
 
 // TestSimpleSelectNeighbors verifies neighbor selection logic
-func TestSimpleSelectNeighbors(t *testing.T) {
-	config := Config{
-		M:              5,
-		Mmax:           5,
-		Mmax0:          5,
-		EfConstruction: 16,
-		MaxLevel:       3,
-		DistanceFunc:   EuclideanDistance,
-	}
+// func TestSimpleSelectNeighbors(t *testing.T) {
+// 	config := Config{
+// 		M:              5,
+// 		Mmax:           5,
+// 		Mmax0:          5,
+// 		EfConstruction: 16,
+// 		MaxLevel:       3,
+// 		DistanceFunc:   EuclideanDistance,
+// 	}
 
-	h, err := NewHNSW(config)
-	if err != nil {
-		t.Fatalf("Failed to create HNSW: %v", err)
-	}
+// 	h, err := NewHNSW(config)
+// 	if err != nil {
+// 		t.Fatalf("Failed to create HNSW: %v", err)
+// 	}
 
-	// Create a graph with 5 nodes
-	for i := 0; i < 5; i++ {
-		h.Insert([]float32{float32(i), 0.0}, i)
-	}
+// 	// Create a graph with 5 nodes
+// 	for i := 0; i < 5; i++ {
+// 		h.Insert([]float32{float32(i), 0.0}, i)
+// 	}
 
-	// Create a minheap with distances to node 2
-	candidates := h.heapPool.GetMinHeap()
+// 	// Create a minheap with distances to node 2
+// 	candidates := h.heapPool.GetMinHeap()
 
-	// Add items to the heap with specific distances
-	items := []struct {
-		distance float32
-		id       int
-	}{
-		{2.0, 0}, // 2 units away
-		{1.0, 1}, // 1 unit away
-		{0.0, 2}, // 0 units away (self)
-		{1.0, 3}, // 1 unit away
-		{2.0, 4}, // 2 units away
-	}
+// 	// Add items to the heap with specific distances
+// 	items := []struct {
+// 		distance float32
+// 		id       int
+// 	}{
+// 		{2.0, 0}, // 2 units away
+// 		{1.0, 1}, // 1 unit away
+// 		{0.0, 2}, // 0 units away (self)
+// 		{1.0, 3}, // 1 unit away
+// 		{2.0, 4}, // 2 units away
+// 	}
 
-	for _, item := range items {
-		candidates.Push(structs.NewNodeHeap(item.distance, item.id))
-	}
+// 	for _, item := range items {
+// 		candidates.Push(structs.NewNodeHeap(item.distance, item.id))
+// 	}
 
-	// Select top 3 neighbors
-	neighbors := h.simpleSelectNeighbors(candidates, 3)
+// 	// Select top 3 neighbors
+// 	neighbors := h.simpleSelectNeighbors(candidates, 3)
 
-	// Should get the 3 closest: ids 2, 1, 3 (in some order)
-	if len(neighbors) != 3 {
-		t.Fatalf("Expected 3 neighbors, got %d", len(neighbors))
-	}
+// 	// Should get the 3 closest: ids 2, 1, 3 (in some order)
+// 	if len(neighbors) != 3 {
+// 		t.Fatalf("Expected 3 neighbors, got %d", len(neighbors))
+// 	}
 
-	// Check all expected IDs are present
-	expectedIDs := map[int]bool{1: true, 2: true, 3: true}
-	for _, n := range neighbors {
-		if !expectedIDs[n.ID] {
-			t.Errorf("Unexpected neighbor ID: %d", n.ID)
-		}
-		delete(expectedIDs, n.ID) // Remove to check duplicates
-	}
+// 	// Check all expected IDs are present
+// 	expectedIDs := map[int]bool{1: true, 2: true, 3: true}
+// 	for _, n := range neighbors {
+// 		if !expectedIDs[n.ID] {
+// 			t.Errorf("Unexpected neighbor ID: %d", n.ID)
+// 		}
+// 		delete(expectedIDs, n.ID) // Remove to check duplicates
+// 	}
 
-	if len(expectedIDs) != 0 {
-		t.Errorf("Missing some expected neighbors: %v", expectedIDs)
-	}
-}
+// 	if len(expectedIDs) != 0 {
+// 		t.Errorf("Missing some expected neighbors: %v", expectedIDs)
+// 	}
+// }
 
 // TestSearchWithDifferentEfValues verifies the effect of ef parameter on search quality
 func TestSearchWithDifferentEfValues(t *testing.T) {

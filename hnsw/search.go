@@ -25,14 +25,14 @@ Parameters:
   - level: the current layer in the graph
 
 Returns:
-  - MaxHeap containing the ef closest elements found
+  - The ef closest nodes to the query vector, sorted in ascending order of distance.
 
 Time Complexity: O(ef * log(ef)) average case
 Space Complexity: O(ef + N) where N is the number of visited nodes
 
 Note: For ef=1, it automatically switches to a more efficient greedy search strategy.
 */
-func (h *HNSW) searchLayer(query []float32, entry *structs.Node, ef, level int) *structs.MaxHeap {
+func (h *HNSW) searchLayer(query []float32, entry *structs.Node, ef, level int) []*structs.Node {
 	distFunc := h.DistanceFunc
 	nodes := h.Nodes
 	//v ← ep  set of visited elements
@@ -107,7 +107,15 @@ func (h *HNSW) searchLayer(query []float32, entry *structs.Node, ef, level int) 
 		}
 	}
 
-	return nearest
+	nearestLen := nearest.Len()
+	results := make([]*structs.Node, nearestLen)
+
+	for i := nearestLen - 1; i >= 0; i-- {
+		item := nearest.Pop()
+		results[i] = h.Nodes[item.Id]
+	}
+
+	return results
 }
 
 // greedySearchLayer performs a simple greedy search at a specific layer.
@@ -197,14 +205,7 @@ func (h *HNSW) KNN_Search(query []float32, K, ef int) []*structs.Node {
 
 	// Extract the top K nearest elements from W.
 	// return K nearest elements from W to q
-	results := make([]*structs.Node, 0, K)
-
-	for candidates.Len() > 0 && len(results) < K {
-		item := candidates.Pop()
-		results = append(results, h.Nodes[item.Id])
-	}
-
-	return results
+	return candidates[:K]
 }
 
 // simpleSelectNeighbors selects up to M closest neighbors from the candidates heap.
@@ -212,19 +213,14 @@ func (h *HNSW) KNN_Search(query []float32, K, ef int) []*structs.Node {
 // selecting the M closest elements based on distance.
 //
 // Note: The input heap is consumed during the process.
-func (h *HNSW) simpleSelectNeighbors(candidates *structs.MinHeap, M int) []*structs.Node {
-	neighbors := make([]*structs.Node, 0, M)
-
-	// Extract the top M elements from the MinHeap
-	for candidates.Len() > 0 && len(neighbors) < M {
-		item := candidates.Pop()
-		itemID := item.Id
-		if itemID > len(h.Nodes) || h.Nodes[itemID] == nil {
-			continue
-		}
-
-		neighbors = append(neighbors, h.Nodes[itemID])
+func (h *HNSW) simpleSelectNeighbors(candidates []*structs.Node, M int) []*structs.Node {
+	limit := M
+	if len(candidates) < M {
+		limit = len(candidates)
 	}
+
+	neighbors := make([]*structs.Node, limit)
+	copy(neighbors, candidates[:limit])
 
 	return neighbors
 }
