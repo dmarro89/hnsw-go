@@ -113,6 +113,11 @@ func (h *HNSW) updateBidirectionalConnections(q *structs.Node, neighbors []*stru
 	tmpHeap := h.heapPool.GetMinHeap()
 	defer h.heapPool.PutMinHeap(tmpHeap)
 
+	// Pre-allocazione dell'array di candidati da riutilizzare
+	// Stimiamo la dimensione massima necessaria (maxConn + 1 per aggiungere q)
+	maxNeighborsCount := maxConn + 1
+	sharedCandidates := make([]*structs.Node, 0, maxNeighborsCount)
+
 	// for each e ∈ neighbors
 	for _, neighbor := range neighbors {
 		if level >= len(neighbor.Neighbors) {
@@ -129,6 +134,9 @@ func (h *HNSW) updateBidirectionalConnections(q *structs.Node, neighbors []*stru
 
 		// Optimize the neighbors' neighborhoods.
 		tmpHeap.Reset()
+		// Reset l'array condiviso senza deallocarlo
+		sharedCandidates = sharedCandidates[:0]
+
 		// eConn ← neighborhood(neighbor) at layer level
 		eConn := neighbor.Neighbors[level]
 
@@ -137,15 +145,16 @@ func (h *HNSW) updateBidirectionalConnections(q *structs.Node, neighbors []*stru
 			tmpHeap.Push(structs.NewNodeHeap(dist, n.ID))
 		}
 
-		candidates := make([]*structs.Node, 0, tmpHeap.Len())
-		for i := 0; i < tmpHeap.Len(); i++ {
-			candidates = append(candidates, h.Nodes[tmpHeap.Pop().Id])
+		// Estrai gli elementi dalla heap
+		heapSize := tmpHeap.Len()
+		for i := 0; i < heapSize; i++ {
+			item := tmpHeap.Pop()
+			sharedCandidates = append(sharedCandidates, h.Nodes[item.Id])
 		}
 
 		// Shrink the neighborhood if it exceeds the allowed limit.
 		// eNewConn ← SELECT-NEIGHBORS(e, eConn, Mmax, lc)
-		eNewConn := h.simpleSelectNeighbors(candidates, maxConn)
+		eNewConn := h.simpleSelectNeighbors(sharedCandidates, maxConn)
 		neighbor.Neighbors[level] = eNewConn
-
 	}
 }
