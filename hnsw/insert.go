@@ -112,10 +112,8 @@ func (h *HNSW) updateBidirectionalConnections(q *structs.Node, neighbors []*stru
 	tmpHeap := h.heapPool.GetMinHeap()
 	defer h.heapPool.PutMinHeap(tmpHeap)
 
-	// The maximum number of neighbors to consider for optimization
-	maxNeighborsCount := maxConn + 1
 	// Preallocate the slice for the candidates slice
-	candidates := make([]*structs.Node, 0, maxNeighborsCount)
+	candidates := make([]*structs.Node, 0, maxConn)
 
 	// for each e ∈ neighbors
 	for _, neighbor := range neighbors {
@@ -141,14 +139,19 @@ func (h *HNSW) updateBidirectionalConnections(q *structs.Node, neighbors []*stru
 
 		for _, n := range eConn {
 			dist := h.DistanceFunc(neighbor.Vector, n.Vector)
-			tmpHeap.Push(structs.NewNodeHeap(dist, n.ID))
+			nodeHeap := h.nodeHeapPool.Get(dist, n.ID)
+			tmpHeap.Push(nodeHeap)
 		}
 
 		// Get the top neighbors
-		heapSize := tmpHeap.Len()
-		for i := 0; i < heapSize; i++ {
+		for i := 0; i < maxConn && tmpHeap.Len() > 0; i++ {
 			item := tmpHeap.Pop()
 			candidates = append(candidates, h.Nodes[item.Id])
+			h.nodeHeapPool.Put(item)
+		}
+
+		for tmpHeap.Len() > 0 {
+			h.nodeHeapPool.Put(tmpHeap.Pop())
 		}
 
 		// Shrink the neighborhood if it exceeds the allowed limit.

@@ -13,7 +13,7 @@ func TestHNSWInsertProfiling(t *testing.T) {
 		t.Skip("Saltando il profiling in modalità short")
 	}
 
-	numVectors := 10000
+	numVectors := 100000
 	dimension := 128
 
 	// Genera vettori casuali

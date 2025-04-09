@@ -38,6 +38,8 @@ func (h *HNSW) searchLayer(query []float32, entry *structs.Node, ef, level int) 
 	//v ← ep  set of visited elements
 	visited := make([]bool, len(nodes))
 
+	nodeHeapMap := make(map[int]*structs.NodeHeap, ef*2)
+
 	//C ← ep set of candidates
 	candidates := h.heapPool.GetMinHeap()
 	// W ← ep dynamic list of found nearest neighbors
@@ -50,8 +52,12 @@ func (h *HNSW) searchLayer(query []float32, entry *structs.Node, ef, level int) 
 
 	// Initialize with the entry point
 	initialDist := distFunc(query, entry.Vector)
-	candidates.Push(structs.NewNodeHeap(initialDist, entry.ID))
-	nearest.Push(structs.NewNodeHeap(initialDist, entry.ID))
+
+	entryNodeHeap := h.getNodeHeap(nodeHeapMap, initialDist, entry.ID)
+
+	candidates.Push(entryNodeHeap)
+	nearest.Push(entryNodeHeap)
+
 	visited[entry.ID] = true
 
 	var (
@@ -65,6 +71,7 @@ func (h *HNSW) searchLayer(query []float32, entry *structs.Node, ef, level int) 
 		current := candidates.Pop()
 		currentDist = current.Dist
 		currentID = current.Id
+
 		// f ← get furthest element from W to q
 		furthest := nearest.Peek()
 		furthestDist := furthest.Dist
@@ -94,14 +101,16 @@ func (h *HNSW) searchLayer(query []float32, entry *structs.Node, ef, level int) 
 			// if distance(e, q) < distance(f, q) or │W│ < ef
 			dist := distFunc(query, neighbor.Vector)
 			if dist < furthestDist || nearest.Len() < ef {
+				candidateNodeHeap := h.getNodeHeap(nodeHeapMap, dist, neighbor.ID)
+
 				// C ← C ⋃ e
-				candidates.Push(structs.NewNodeHeap(dist, neighbor.ID))
+				candidates.Push(candidateNodeHeap)
 				// W ← W ⋃ e
-				nearest.Push(structs.NewNodeHeap(dist, neighbor.ID))
+				nearest.Push(candidateNodeHeap)
 				// if │W│ > ef
 				// remove furthest element from W to q
 				if nearest.Len() > ef {
-					nearest.Pop()
+					h.nodeHeapPool.Put(nearest.Pop())
 				}
 			}
 		}
@@ -115,7 +124,22 @@ func (h *HNSW) searchLayer(query []float32, entry *structs.Node, ef, level int) 
 		results[i] = h.Nodes[item.Id]
 	}
 
+	for _, nh := range nodeHeapMap {
+		h.nodeHeapPool.Put(nh)
+	}
+
 	return results
+}
+
+// Funzione per ottenere o creare un NodeHeap
+func (h *HNSW) getNodeHeap(nodeHeapMap map[int]*structs.NodeHeap, dist float32, id int) *structs.NodeHeap {
+	if existing, ok := nodeHeapMap[id]; ok {
+		return existing
+	}
+
+	nh := h.nodeHeapPool.Get(dist, id)
+	nodeHeapMap[id] = nh
+	return nh
 }
 
 // greedySearchLayer performs a simple greedy search at a specific layer.
