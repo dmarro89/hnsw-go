@@ -51,6 +51,8 @@ type HNSW struct {
 	nodeHeapPool *structs.NodeHeapPool
 
 	mutex sync.RWMutex
+
+	nodeMapPool *structs.NodeMapPool
 }
 
 // Config holds the configuration parameters for HNSW construction
@@ -104,6 +106,7 @@ func NewHNSW(cfg Config) (*HNSW, error) {
 		RandFunc:       rand.Float64,
 		heapPool:       structs.NewHeapPoolManager(),
 		nodeHeapPool:   structs.NewNodeHeapPool(),
+		nodeMapPool:    structs.NewNodeMapPool(),
 	}
 
 	return h, nil

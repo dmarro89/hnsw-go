@@ -38,7 +38,7 @@ func (h *HNSW) searchLayer(query []float32, entry *structs.Node, ef, level int) 
 	//v ← ep  set of visited elements
 	visited := make([]bool, len(nodes))
 
-	nodeHeapMap := make(map[int]*structs.NodeHeap, ef*2)
+	nodeHeapMap := h.nodeMapPool.Get()
 
 	//C ← ep set of candidates
 	candidates := h.heapPool.GetMinHeap()
@@ -236,13 +236,9 @@ func (h *HNSW) KNN_Search(query []float32, K, ef int) []*structs.Node {
 // This implements the basic neighbor selection strategy from the HNSW paper,
 // selecting the M closest elements based on distance.
 func (h *HNSW) simpleSelectNeighbors(candidates []*structs.Node, M int) []*structs.Node {
-	limit := M
-	if len(candidates) < M {
-		limit = len(candidates)
-	}
+	count := min(len(candidates), M)
+	selected := make([]*structs.Node, count)
 
-	neighbors := make([]*structs.Node, limit)
-	copy(neighbors, candidates[:limit])
-
-	return neighbors
+	copy(selected, candidates[:count])
+	return selected
 }
