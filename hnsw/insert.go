@@ -106,8 +106,13 @@ func (h *HNSW) Insert(vector []float32, id int) {
 // 4. Connections are optimized to maintain the best possible neighbors
 func (h *HNSW) updateBidirectionalConnections(q *structs.Node, neighbors []*structs.Node, level int, maxConn int) {
 	// add bidirectional connections from neighbors to q at layer lc
-	q.Neighbors[level] = make([]*structs.Node, len(neighbors))
-	copy(q.Neighbors[level], neighbors)
+	if cap(q.Neighbors[level]) >= len(neighbors) {
+		q.Neighbors[level] = q.Neighbors[level][:0]                   // Reset and reuse the slice
+		q.Neighbors[level] = append(q.Neighbors[level], neighbors...) // Append neighbors
+	} else {
+		q.Neighbors[level] = make([]*structs.Node, len(neighbors))
+		copy(q.Neighbors[level], neighbors)
+	}
 
 	tmpHeap := h.heapPool.GetMinHeap()
 	defer h.heapPool.PutMinHeap(tmpHeap)
