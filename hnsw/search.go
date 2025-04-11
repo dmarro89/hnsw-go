@@ -33,25 +33,23 @@ Space Complexity: O(ef + N) where N is the number of visited nodes
 Note: For ef=1, it automatically switches to a more efficient greedy search strategy.
 */
 func (h *HNSW) searchLayer(query []float32, entry *structs.Node, ef, level int) []*structs.Node {
-	distFunc := h.DistanceFunc
-	nodes := h.Nodes
 	//v ← ep  set of visited elements
-	visited := make([]bool, len(nodes))
-
-	nodeHeapMap := h.nodeMapPool.Get()
+	visited := make([]bool, len(h.Nodes))
 
 	//C ← ep set of candidates
 	candidates := h.heapPool.GetMinHeap()
 	// W ← ep dynamic list of found nearest neighbors
 	nearest := h.heapPool.GetMaxHeap()
+	nodeHeapMap := h.nodeMapPool.Get()
 
 	defer func() {
 		h.heapPool.PutMinHeap(candidates)
 		h.heapPool.PutMaxHeap(nearest)
+		h.nodeMapPool.Put(nodeHeapMap)
 	}()
 
 	// Initialize with the entry point
-	initialDist := distFunc(query, entry.Vector)
+	initialDist := h.DistanceFunc(query, entry.Vector)
 
 	entryNodeHeap := h.getNodeHeap(nodeHeapMap, initialDist, entry.ID)
 
@@ -61,8 +59,10 @@ func (h *HNSW) searchLayer(query []float32, entry *structs.Node, ef, level int) 
 	visited[entry.ID] = true
 
 	var (
-		currentDist float32
-		currentID   int
+		currentDist    float32
+		currentID      int
+		furthestDist   float32
+		lastNearestLen int = 1
 	)
 
 	// while │C│ > 0
@@ -73,8 +73,11 @@ func (h *HNSW) searchLayer(query []float32, entry *structs.Node, ef, level int) 
 		currentID = current.Id
 
 		// f ← get furthest element from W to q
-		furthest := nearest.Peek()
-		furthestDist := furthest.Dist
+		if nearest.Len() > 0 && (furthestDist == 0 || nearest.Len() != lastNearestLen) {
+			furthest := nearest.Peek()
+			furthestDist = furthest.Dist
+			lastNearestLen = nearest.Len()
+		}
 
 		// if distance(c, q) > distance(f, q)
 		// break  -> all elements in W are evaluated
@@ -82,7 +85,7 @@ func (h *HNSW) searchLayer(query []float32, entry *structs.Node, ef, level int) 
 			break
 		}
 
-		currentNode := nodes[currentID]
+		currentNode := h.Nodes[currentID]
 
 		if currentNode == nil || level >= len(currentNode.Neighbors) || len(currentNode.Neighbors[level]) == 0 {
 			continue
@@ -99,7 +102,7 @@ func (h *HNSW) searchLayer(query []float32, entry *structs.Node, ef, level int) 
 
 			// f ← get furthest element from W to q
 			// if distance(e, q) < distance(f, q) or │W│ < ef
-			dist := distFunc(query, neighbor.Vector)
+			dist := h.DistanceFunc(query, neighbor.Vector)
 			if dist < furthestDist || nearest.Len() < ef {
 				candidateNodeHeap := h.getNodeHeap(nodeHeapMap, dist, neighbor.ID)
 

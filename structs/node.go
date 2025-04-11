@@ -15,9 +15,6 @@ type Node struct {
 	// Neighbors stores the IDs of neighboring nodes for each level
 	// The first index represents the level, the second index represents neighbors at that level
 	Neighbors [][]*Node
-
-	// sizes tracks the number of actual neighbors at each level
-	sizes []int
 }
 
 // NewNode creates a new Node with the specified parameters.
@@ -41,6 +38,5 @@ func NewNode(id int, vector []float32, level, maxLevel, maxNeighbors int) *Node 
 		Vector:    vector,
 		Level:     level,
 		Neighbors: neighbors,
-		sizes:     make([]int, maxLevel),
 	}
 }
