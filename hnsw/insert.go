@@ -139,7 +139,7 @@ func (h *HNSW) updateBidirectionalConnections(q *structs.Node, neighbors []*stru
 			neighbor.Neighbors[level] = append(neighbor.Neighbors[level], q)
 		} else {
 			// We need to allocate a new slice with double the capacity
-			newNeighbors := make([]*structs.Node, currentLen+1, currentLen*2)
+			newNeighbors := make([]*structs.Node, currentLen+1, (currentLen+1)*2)
 			copy(newNeighbors, neighbor.Neighbors[level])
 			newNeighbors[currentLen] = q
 			neighbor.Neighbors[level] = newNeighbors
