@@ -34,7 +34,7 @@ Note: For ef=1, it automatically switches to a more efficient greedy search stra
 */
 func (h *HNSW) searchLayer(query []float32, entry *structs.Node, ef, level int) []*structs.Node {
 	//v ← ep  set of visited elements
-	visited := make([]bool, len(h.Nodes))
+	visited := h.visitedPool.Get()
 
 	//C ← ep set of candidates
 	candidates := h.heapPool.GetMinHeap()
@@ -46,6 +46,7 @@ func (h *HNSW) searchLayer(query []float32, entry *structs.Node, ef, level int) 
 		h.heapPool.PutMinHeap(candidates)
 		h.heapPool.PutMaxHeap(nearest)
 		h.nodeMapPool.Put(nodeHeapMap)
+		h.visitedPool.Put(visited)
 	}()
 
 	// Initialize with the entry point
@@ -56,7 +57,7 @@ func (h *HNSW) searchLayer(query []float32, entry *structs.Node, ef, level int) 
 	candidates.Push(entryNodeHeap)
 	nearest.Push(entryNodeHeap)
 
-	visited[entry.ID] = true
+	visited[entry.ID] = struct{}{}
 
 	var (
 		currentDist    float32
@@ -95,10 +96,10 @@ func (h *HNSW) searchLayer(query []float32, entry *structs.Node, ef, level int) 
 		for _, neighbor := range currentNode.Neighbors[level] {
 			// if e ∉ v
 			// v ← v ⋃ e
-			if visited[neighbor.ID] {
+			if _, exists := visited[neighbor.ID]; exists {
 				continue
 			}
-			visited[neighbor.ID] = true
+			visited[neighbor.ID] = struct{}{}
 
 			// f ← get furthest element from W to q
 			// if distance(e, q) < distance(f, q) or │W│ < ef
@@ -233,15 +234,4 @@ func (h *HNSW) KNN_Search(query []float32, K, ef int) []*structs.Node {
 	// Extract the top K nearest elements from W.
 	// return K nearest elements from W to q
 	return candidates[:K]
-}
-
-// simpleSelectNeighbors selects up to M closest neighbors from the candidates slice.
-// This implements the basic neighbor selection strategy from the HNSW paper,
-// selecting the M closest elements based on distance.
-func (h *HNSW) simpleSelectNeighbors(candidates []*structs.Node, M int) []*structs.Node {
-	count := min(len(candidates), M)
-	selected := make([]*structs.Node, count)
-
-	copy(selected, candidates[:count])
-	return selected
 }

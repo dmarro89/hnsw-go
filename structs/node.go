@@ -26,11 +26,16 @@ type Node struct {
 //   - maxNeighbors: maximum number of neighbors per level
 //
 // Returns a pointer to the newly created Node.
-func NewNode(id int, vector []float32, level, maxLevel, maxNeighbors int) *Node {
+func NewNode(id int, vector []float32, level, maxLevel, mMax int, mMax0 int) *Node {
 	// Initialize neighbors slices with pre-allocated capacity
-	neighbors := make([][]*Node, maxLevel+1)
+	neighbors := make([][]*Node, level+1)
 	for i := range neighbors {
-		neighbors[i] = make([]*Node, 0, maxNeighbors)
+		if i == 0 {
+			// Level 0 neighbors are initialized with a capacity of mMax0
+			neighbors[i] = make([]*Node, 0, mMax0)
+		} else {
+			neighbors[i] = make([]*Node, 0, mMax)
+		}
 	}
 
 	return &Node{

@@ -307,9 +307,9 @@ func TestUpdateBidirectionalConnections(t *testing.T) {
 	maxConn := 2
 
 	// Manually create nodes
-	q := structs.NewNode(0, []float32{0.0, 0.0}, 0, 1, maxConn)
-	n1 := structs.NewNode(1, []float32{0.1, 0.0}, 0, 1, maxConn)
-	n2 := structs.NewNode(2, []float32{0.2, 0.0}, 0, 1, maxConn)
+	q := structs.NewNode(0, []float32{0.0, 0.0}, 0, 1, maxConn, maxConn)
+	n1 := structs.NewNode(1, []float32{0.1, 0.0}, 0, 1, maxConn, maxConn)
+	n2 := structs.NewNode(2, []float32{0.2, 0.0}, 0, 1, maxConn, maxConn)
 
 	// Initialize neighbors of n1 and n2
 	n1.Neighbors[level] = []*structs.Node{}

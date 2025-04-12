@@ -35,9 +35,9 @@ func BenchmarkHNSWConstruction(b *testing.B) {
 		numVecs   int
 		dimension int
 	}{
-		{"small", 1000, 128},
-		{"medium", 10000, 128},
-		{"large", 100000, 128},
+		{"small", 10000, 128},
+		{"medium", 100000, 128},
+		{"large", 1000000, 128},
 	}
 
 	for _, cfg := range configs {

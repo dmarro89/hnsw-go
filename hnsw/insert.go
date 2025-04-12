@@ -32,7 +32,7 @@ func (h *HNSW) Insert(vector []float32, id int) {
 	// l ← ⌊-ln(unif(0..1))∙mL⌋ // new element’s level
 	// Generate the level for the new node based on a random distribution.
 	level := h.RandomLevel()
-	q := structs.NewNode(id, vector, level, h.MaxLevel, h.Mmax)
+	q := structs.NewNode(id, vector, level, h.MaxLevel, h.Mmax, h.Mmax0)
 
 	// Generate the level for the new node based on a random distribution.
 	if h.EntryPoint == nil {
@@ -78,7 +78,12 @@ func (h *HNSW) Insert(vector []float32, id int) {
 		}
 
 		// neighbors ← SELECT-NEIGHBORS(q, W, M, lc)
-		neighbors := h.simpleSelectNeighbors(nearestNeighbors, maxConn)
+		var neighbors []*structs.Node
+		if len(nearestNeighbors) <= maxConn {
+			neighbors = nearestNeighbors
+		} else {
+			neighbors = nearestNeighbors[:maxConn]
+		}
 		h.updateBidirectionalConnections(q, neighbors, lc, maxConn)
 
 		// ep ← W
@@ -119,6 +124,7 @@ func (h *HNSW) updateBidirectionalConnections(q *structs.Node, neighbors []*stru
 
 	// Preallocate the slice for the candidates slice
 	candidates := make([]*structs.Node, 0, maxConn)
+	nodeHeapItems := make([]*structs.NodeHeap, 0, maxConn+1)
 
 	// for each e ∈ neighbors
 	for _, neighbor := range neighbors {
@@ -127,7 +133,17 @@ func (h *HNSW) updateBidirectionalConnections(q *structs.Node, neighbors []*stru
 		}
 
 		// append q to the neighborhood of e at layer lc
-		neighbor.Neighbors[level] = append(neighbor.Neighbors[level], q)
+		currentLen := len(neighbor.Neighbors[level])
+		if currentLen < cap(neighbor.Neighbors[level]) {
+			// There is enough capacity, so we can reuse the slice
+			neighbor.Neighbors[level] = append(neighbor.Neighbors[level], q)
+		} else {
+			// We need to allocate a new slice with double the capacity
+			newNeighbors := make([]*structs.Node, currentLen+1, currentLen*2)
+			copy(newNeighbors, neighbor.Neighbors[level])
+			newNeighbors[currentLen] = q
+			neighbor.Neighbors[level] = newNeighbors
+		}
 
 		// Check if we need to optimize connections
 		if len(neighbor.Neighbors[level]) <= maxConn {
@@ -138,6 +154,8 @@ func (h *HNSW) updateBidirectionalConnections(q *structs.Node, neighbors []*stru
 		tmpHeap.Reset()
 		// Reset the candidates slice
 		candidates = candidates[:0]
+		// Reset the nodeHeapItems slice
+		nodeHeapItems = nodeHeapItems[:0]
 
 		// eConn ← neighborhood(neighbor) at layer level
 		eConn := neighbor.Neighbors[level]
@@ -145,6 +163,7 @@ func (h *HNSW) updateBidirectionalConnections(q *structs.Node, neighbors []*stru
 		for _, n := range eConn {
 			dist := h.DistanceFunc(neighbor.Vector, n.Vector)
 			nodeHeap := h.nodeHeapPool.Get(dist, n.ID)
+			nodeHeapItems = append(nodeHeapItems, nodeHeap)
 			tmpHeap.Push(nodeHeap)
 		}
 
@@ -152,16 +171,21 @@ func (h *HNSW) updateBidirectionalConnections(q *structs.Node, neighbors []*stru
 		for i := 0; i < maxConn && tmpHeap.Len() > 0; i++ {
 			item := tmpHeap.Pop()
 			candidates = append(candidates, h.Nodes[item.Id])
-			h.nodeHeapPool.Put(item)
 		}
 
-		for tmpHeap.Len() > 0 {
-			h.nodeHeapPool.Put(tmpHeap.Pop())
+		for _, item := range nodeHeapItems {
+			h.nodeHeapPool.Put(item)
 		}
 
 		// Shrink the neighborhood if it exceeds the allowed limit.
 		// eNewConn ← SELECT-NEIGHBORS(e, eConn, Mmax, lc)
-		eNewConn := h.simpleSelectNeighbors(candidates, maxConn)
-		neighbor.Neighbors[level] = eNewConn
+		limit := min(len(candidates), maxConn)
+		if cap(neighbor.Neighbors[level]) >= len(candidates) {
+			neighbor.Neighbors[level] = neighbor.Neighbors[level][:limit]
+			copy(neighbor.Neighbors[level], candidates)
+		} else {
+			neighbor.Neighbors[level] = make([]*structs.Node, limit)
+			copy(neighbor.Neighbors[level], candidates)
+		}
 	}
 }
