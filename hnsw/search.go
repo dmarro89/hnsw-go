@@ -35,11 +35,11 @@ Note: For ef=1, it automatically switches to a more efficient greedy search stra
 func (h *HNSW) searchLayer(query []float32, entry *structs.Node, ef, level int) []*structs.Node {
 	//v ← ep  set of visited elements
 	visited := h.visitedPool.Get()
-
 	//C ← ep set of candidates
 	candidates := h.heapPool.GetMinHeap()
 	// W ← ep dynamic list of found nearest neighbors
 	nearest := h.heapPool.GetMaxHeap()
+	// nodeHeapMap ← map of node heaps for reuse
 	nodeHeapMap := h.nodeMapPool.Get()
 
 	defer func() {
@@ -95,10 +95,10 @@ func (h *HNSW) searchLayer(query []float32, entry *structs.Node, ef, level int) 
 		// for each e ∈ neighbourhood(c) at layer lc
 		for _, neighbor := range currentNode.Neighbors[level] {
 			// if e ∉ v
-			// v ← v ⋃ e
 			if _, exists := visited[neighbor.ID]; exists {
 				continue
 			}
+			// v ← v ⋃ e
 			visited[neighbor.ID] = struct{}{}
 
 			// f ← get furthest element from W to q

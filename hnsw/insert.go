@@ -32,12 +32,14 @@ func (h *HNSW) Insert(vector []float32, id int) {
 	// l ← ⌊-ln(unif(0..1))∙mL⌋ // new element’s level
 	// Generate the level for the new node based on a random distribution.
 	level := h.RandomLevel()
-	q := structs.NewNode(id, vector, level, h.MaxLevel, h.Mmax, h.Mmax0)
+	q := h.nodeObjectPool.Get(id, vector, level, h.MaxLevel, h.Mmax, h.Mmax0)
+	defer h.nodeObjectPool.Put(q)
 
+	newNode := structs.NewNode(id, vector, level, h.MaxLevel, h.Mmax, h.Mmax0)
 	// Generate the level for the new node based on a random distribution.
 	if h.EntryPoint == nil {
-		h.EntryPoint = q
-		h.Nodes = append(h.Nodes, q)
+		h.EntryPoint = newNode
+		h.Nodes = append(h.Nodes, newNode)
 		return
 	}
 
@@ -47,7 +49,7 @@ func (h *HNSW) Insert(vector []float32, id int) {
 	L := ep.Level
 
 	// Add the new node to the list of nodes in the graph
-	h.Nodes = append(h.Nodes, q)
+	h.Nodes = append(h.Nodes, newNode)
 
 	// Phase 1: Descend through layers to find entry point for insertion
 	// This phase finds good starting points for the lower layer insertions
@@ -84,7 +86,7 @@ func (h *HNSW) Insert(vector []float32, id int) {
 		} else {
 			neighbors = nearestNeighbors[:maxConn]
 		}
-		h.updateBidirectionalConnections(q, neighbors, lc, maxConn)
+		h.updateBidirectionalConnections(newNode, neighbors, lc, maxConn)
 
 		// ep ← W
 		if len(nearestNeighbors) > 0 {
@@ -97,7 +99,7 @@ func (h *HNSW) Insert(vector []float32, id int) {
 	// If the new node's level is higher than the current top level, update the entry point.
 	// if l > L
 	if level > L {
-		h.EntryPoint = q
+		h.EntryPoint = newNode
 	}
 }
 
@@ -114,7 +116,8 @@ func (h *HNSW) updateBidirectionalConnections(q *structs.Node, neighbors []*stru
 	q.Neighbors[level] = q.Neighbors[level][:0]                   // Reset and reuse the slice
 	q.Neighbors[level] = append(q.Neighbors[level], neighbors...) // Append neighbors
 
-	// Preallocate the slice for the candidates slice
+	// Getting the candidates nodes for the neighbors from the pool
+	// and the temporary heap for the optimization process
 	candidates := h.nodePool.Get()
 	tmpHeap := h.heapPool.GetMinHeap()
 	defer h.heapPool.PutMinHeap(tmpHeap)
