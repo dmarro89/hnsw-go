@@ -69,7 +69,7 @@ func (h *HNSW) Insert(vector []float32, id int) {
 	for lc := maxLayer; lc >= 0; lc-- {
 		// W ← list for the currently found nearest elements
 		// W ← SEARCH-LAYER(q, ep, efConstruction, lc)
-		nearestNeighbors := h.searchLayer(q.Vector, ep, h.EfConstruction, lc)
+		nearestNeighbors := h.searchLayer(vector, ep, h.EfConstruction, lc)
 
 		// Ensure that the number of connections does not exceed the allowed limit.
 		maxConn := h.Mmax
