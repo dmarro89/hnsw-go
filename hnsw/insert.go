@@ -32,8 +32,6 @@ func (h *HNSW) Insert(vector []float32, id int) {
 	// l ← ⌊-ln(unif(0..1))∙mL⌋ // new element’s level
 	// Generate the level for the new node based on a random distribution.
 	level := h.RandomLevel()
-	q := h.nodeObjectPool.Get(id, vector, level, h.MaxLevel, h.Mmax, h.Mmax0)
-	defer h.nodeObjectPool.Put(q)
 
 	newNode := structs.NewNode(id, vector, level, h.MaxLevel, h.Mmax, h.Mmax0)
 	// Generate the level for the new node based on a random distribution.
@@ -56,7 +54,7 @@ func (h *HNSW) Insert(vector []float32, id int) {
 	// for lc ← L … l+1
 	for lc := L; lc > level; lc-- {
 		// W ← SEARCH-LAYER(q, ep, ef=1, lc)
-		newEp := h.greedySearchLayer(q.Vector, ep, lc)
+		newEp := h.greedySearchLayer(vector, ep, lc)
 		if newEp == nil {
 			break
 		}

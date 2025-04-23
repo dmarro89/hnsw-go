@@ -59,9 +59,6 @@ type HNSW struct {
 
 	// nodePool manages node objects for reuse
 	nodePool *structs.NodePool
-
-	// nodeObjectPool manages node objects for reuse
-	nodeObjectPool *structs.NodeObjectPool
 }
 
 // Config holds the configuration parameters for HNSW construction
@@ -118,7 +115,6 @@ func NewHNSW(cfg Config) (*HNSW, error) {
 		nodeMapPool:    structs.NewNodeMapPool(),
 		visitedPool:    structs.NewVisitedPool(),
 		nodePool:       structs.NewNodePool(cfg.Mmax0),
-		nodeObjectPool: structs.NewNodeObjectPool(),
 	}
 
 	return h, nil
