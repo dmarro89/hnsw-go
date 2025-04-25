@@ -29,6 +29,8 @@ func (p *NodeHeapPool) Get(dist float32, id int) *NodeHeap {
 }
 
 func (p *NodeHeapPool) Put(nh *NodeHeap) {
+	nh.Dist = 0
+	nh.Id = -1
 	p.pool.Put(nh)
 }
 

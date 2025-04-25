@@ -52,8 +52,6 @@ type HNSW struct {
 
 	mutex sync.RWMutex
 
-	nodeMapPool *structs.NodeMapPool
-
 	// vistedPool manages visited nodes for reuse
 	visitedPool *structs.VisitedPool
 
@@ -112,7 +110,6 @@ func NewHNSW(cfg Config) (*HNSW, error) {
 		RandFunc:       rand.Float64,
 		heapPool:       structs.NewHeapPoolManager(),
 		nodeHeapPool:   structs.NewNodeHeapPool(),
-		nodeMapPool:    structs.NewNodeMapPool(),
 		visitedPool:    structs.NewVisitedPool(),
 		nodePool:       structs.NewNodePool(cfg.Mmax0),
 	}
