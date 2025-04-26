@@ -52,8 +52,11 @@ type HNSW struct {
 
 	mutex sync.RWMutex
 
-	// vistedPool manages visited nodes for reuse
-	visitedPool *structs.VisitedPool
+	// Versioning counter for faster visited node check
+	visitStamp int
+
+	// Pre-allocated array for tracking visited nodes
+	visitedIDs []int
 
 	// nodePool manages node objects for reuse
 	nodePool *structs.NodePool
@@ -110,7 +113,8 @@ func NewHNSW(cfg Config) (*HNSW, error) {
 		RandFunc:       rand.Float64,
 		heapPool:       structs.NewHeapPoolManager(),
 		nodeHeapPool:   structs.NewNodeHeapPool(),
-		visitedPool:    structs.NewVisitedPool(),
+		visitStamp:     0,
+		visitedIDs:     make([]int, cfg.EfConstruction),
 		nodePool:       structs.NewNodePool(cfg.Mmax0),
 	}
 
@@ -159,4 +163,22 @@ func (h *HNSW) RandomLevel() int {
 		level = h.MaxLevel
 	}
 	return level
+}
+
+// markVisited marks a node as visited during the search process
+func (h *HNSW) markVisited(id int) bool {
+	// Exppand the visitedIDs slice if necessary
+	if id >= len(h.visitedIDs) {
+		newSize := id * 2
+		newVisited := make([]int, newSize)
+		copy(newVisited, h.visitedIDs)
+		h.visitedIDs = newVisited
+	}
+
+	if h.visitedIDs[id] == h.visitStamp {
+		return true
+	}
+
+	h.visitedIDs[id] = h.visitStamp
+	return false
 }

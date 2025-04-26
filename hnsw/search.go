@@ -34,7 +34,11 @@ Note: For ef=1, it automatically switches to a more efficient greedy search stra
 */
 func (h *HNSW) searchLayer(query []float32, entry *structs.Node, ef, level int) []*structs.Node {
 	//v ← ep  set of visited elements
-	visited := h.visitedPool.Get()
+	// Increment the visit stamp for this search
+	// This is used to mark nodes as visited and avoid revisiting them
+	// in the same search iteration.
+	h.visitStamp++
+
 	//C ← ep set of candidates
 	candidates := h.heapPool.GetMinHeap()
 	// W ← ep dynamic list of found nearest neighbors
@@ -43,7 +47,6 @@ func (h *HNSW) searchLayer(query []float32, entry *structs.Node, ef, level int) 
 	defer func() {
 		h.heapPool.PutMinHeap(candidates)
 		h.heapPool.PutMaxHeap(nearest)
-		h.visitedPool.Put(visited)
 	}()
 
 	// Initialize with the entry point
@@ -55,7 +58,8 @@ func (h *HNSW) searchLayer(query []float32, entry *structs.Node, ef, level int) 
 	candidates.Push(candidateNodeHeap)
 	nearest.Push(nearestNodeHeap)
 
-	visited[entry.ID] = struct{}{}
+	// Mark the entry point as visited
+	h.markVisited(entry.ID)
 
 	var (
 		currentDist  float32
@@ -89,11 +93,10 @@ func (h *HNSW) searchLayer(query []float32, entry *structs.Node, ef, level int) 
 		// for each e ∈ neighbourhood(c) at layer lc
 		for _, neighbor := range currentNode.Neighbors[level] {
 			// if e ∉ v
-			if _, exists := visited[neighbor.ID]; exists {
+			// v ← v ⋃ e
+			if h.markVisited(neighbor.ID) {
 				continue
 			}
-			// v ← v ⋃ e
-			visited[neighbor.ID] = struct{}{}
 
 			// f ← get furthest element from W to q
 			// if distance(e, q) < distance(f, q) or │W│ < ef
