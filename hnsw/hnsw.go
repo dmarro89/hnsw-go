@@ -44,12 +44,7 @@ type HNSW struct {
 	// EntryPoint is the highest-level node in the graph
 	EntryPoint *structs.Node
 
-	// heapPool manages heap objects for reuse
-	heapPool *structs.HeapPoolManager
-
-	// nodeHeapPool manages node heap objects for reuse
-	nodeHeapPool *structs.NodeHeapPool
-
+	// mutex is used to synchronize access and write to the HNSW index
 	mutex sync.RWMutex
 
 	// Versioning counter for faster visited node check
@@ -57,9 +52,6 @@ type HNSW struct {
 
 	// Pre-allocated array for tracking visited nodes
 	visitedIDs []int
-
-	// nodePool manages node objects for reuse
-	nodePool *structs.NodePool
 }
 
 // Config holds the configuration parameters for HNSW construction
@@ -111,11 +103,8 @@ func NewHNSW(cfg Config) (*HNSW, error) {
 		MaxLevel:       cfg.MaxLevel,
 		DistanceFunc:   cfg.DistanceFunc,
 		RandFunc:       rand.Float64,
-		heapPool:       structs.NewHeapPoolManager(),
-		nodeHeapPool:   structs.NewNodeHeapPool(),
 		visitStamp:     0,
 		visitedIDs:     make([]int, cfg.EfConstruction),
-		nodePool:       structs.NewNodePool(cfg.Mmax0),
 	}
 
 	return h, nil

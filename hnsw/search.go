@@ -32,7 +32,7 @@ Space Complexity: O(ef + N) where N is the number of visited nodes
 
 Note: For ef=1, it automatically switches to a more efficient greedy search strategy.
 */
-func (h *HNSW) searchLayer(query []float32, entry *structs.Node, ef, level int) []*structs.Node {
+func (h *HNSW) searchLayer(query []float32, entry *structs.Node, ef, level int) []int {
 	//v ← ep  set of visited elements
 	// Increment the visit stamp for this search
 	// This is used to mark nodes as visited and avoid revisiting them
@@ -40,23 +40,17 @@ func (h *HNSW) searchLayer(query []float32, entry *structs.Node, ef, level int) 
 	h.visitStamp++
 
 	//C ← ep set of candidates
-	candidates := h.heapPool.GetMinHeap()
+	candidates := structs.NewMinHeap()
 	// W ← ep dynamic list of found nearest neighbors
-	nearest := h.heapPool.GetMaxHeap()
-
-	defer func() {
-		h.heapPool.PutMinHeap(candidates)
-		h.heapPool.PutMaxHeap(nearest)
-	}()
+	nearest := structs.NewMaxHeap()
+	defer nearest.Reset()
+	defer candidates.Reset()
 
 	// Initialize with the entry point
 	initialDist := h.DistanceFunc(query, entry.Vector)
 
-	candidateNodeHeap := h.nodeHeapPool.Get(initialDist, entry.ID)
-	nearestNodeHeap := h.nodeHeapPool.Get(initialDist, entry.ID)
-
-	candidates.Push(candidateNodeHeap)
-	nearest.Push(nearestNodeHeap)
+	candidates.Push(structs.NewNodeHeap(initialDist, entry.ID))
+	nearest.Push(structs.NewNodeHeap(initialDist, entry.ID))
 
 	// Mark the entry point as visited
 	h.markVisited(entry.ID)
@@ -72,7 +66,6 @@ func (h *HNSW) searchLayer(query []float32, entry *structs.Node, ef, level int) 
 		current := candidates.Pop()
 		currentDist = current.Dist
 		currentNode := h.Nodes[current.Id]
-		h.nodeHeapPool.Put(current)
 
 		// f ← get furthest element from W to q
 		if nearest.Len() > 0 {
@@ -91,40 +84,38 @@ func (h *HNSW) searchLayer(query []float32, entry *structs.Node, ef, level int) 
 		}
 
 		// for each e ∈ neighbourhood(c) at layer lc
-		for _, neighbor := range currentNode.Neighbors[level] {
+		for _, neighborID := range currentNode.Neighbors[level] {
 			// if e ∉ v
 			// v ← v ⋃ e
-			if h.markVisited(neighbor.ID) {
+			if h.markVisited(neighborID) {
 				continue
 			}
 
 			// f ← get furthest element from W to q
 			// if distance(e, q) < distance(f, q) or │W│ < ef
-			dist := h.DistanceFunc(query, neighbor.Vector)
+			dist := h.DistanceFunc(query, h.Nodes[neighborID].Vector)
 			if dist < furthestDist || nearest.Len() < ef {
-				candidateNodeHeap := h.nodeHeapPool.Get(dist, neighbor.ID)
-				nearestNodeHeap := h.nodeHeapPool.Get(dist, neighbor.ID)
 
 				// C ← C ⋃ e
-				candidates.Push(candidateNodeHeap)
+				candidates.Push(structs.NewNodeHeap(dist, neighborID))
 				// W ← W ⋃ e
-				nearest.Push(nearestNodeHeap)
+				nearest.Push(structs.NewNodeHeap(dist, neighborID))
+
 				// if │W│ > ef
 				// remove furthest element from W to q
 				if nearest.Len() > ef {
-					h.nodeHeapPool.Put(nearest.Pop())
+					nearest.Pop()
 				}
 			}
 		}
 	}
 
 	nearestLen := nearest.Len()
-	results := make([]*structs.Node, nearestLen)
+	results := make([]int, nearestLen)
 
 	for i := nearestLen - 1; i >= 0; i-- {
 		item := nearest.Pop()
-		results[i] = h.Nodes[item.Id]
-		h.nodeHeapPool.Put(item)
+		results[i] = item.Id
 	}
 
 	return results
@@ -142,7 +133,8 @@ func (h *HNSW) greedySearchLayer(query []float32, entry *structs.Node, level int
 
 		// Check all neighbors at this level
 		if level < len(currentNode.Neighbors) {
-			for _, neighbor := range currentNode.Neighbors[level] {
+			for _, neighborID := range currentNode.Neighbors[level] {
+				neighbor := h.Nodes[neighborID]
 				dist := h.DistanceFunc(query, neighbor.Vector)
 				if dist < bestDist {
 					bestDist = dist
@@ -176,7 +168,7 @@ func (h *HNSW) greedySearchLayer(query []float32, entry *structs.Node, level int
 //
 // Note: ef should be >= K for meaningful results. Larger ef values give better
 // accuracy at the cost of slower search times.
-func (h *HNSW) KNN_Search(query []float32, K, ef int) []*structs.Node {
+func (h *HNSW) KNN_Search(query []float32, K, ef int) []int {
 	if ef < K {
 		ef = K
 	}

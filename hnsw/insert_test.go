@@ -124,8 +124,8 @@ func TestBidirectionalConnections(t *testing.T) {
 
 	// Helper function to check if node 'from' is connected to node 'to'
 	hasConnection := func(from, to int) bool {
-		for _, neighbor := range h.Nodes[from].Neighbors[0] {
-			if neighbor.ID == to {
+		for _, neighborID := range h.Nodes[from].Neighbors[0] {
+			if neighborID == to {
 				return true
 			}
 		}
@@ -311,12 +311,13 @@ func TestUpdateBidirectionalConnections(t *testing.T) {
 	n1 := structs.NewNode(1, []float32{0.1, 0.0}, 0, 1, maxConn, maxConn)
 	n2 := structs.NewNode(2, []float32{0.2, 0.0}, 0, 1, maxConn, maxConn)
 
+	h.Nodes = append(h.Nodes, q, n1, n2)
 	// Initialize neighbors of n1 and n2
-	n1.Neighbors[level] = []*structs.Node{}
-	n2.Neighbors[level] = []*structs.Node{}
+	n1.Neighbors[level] = []int{}
+	n2.Neighbors[level] = []int{}
 
 	// Update bidirectional connections
-	h.updateBidirectionalConnections(q, []*structs.Node{n1, n2}, level, maxConn)
+	h.updateBidirectionalConnections(q, []int{n1.ID, n2.ID}, level, maxConn)
 
 	// Verify that q is connected to n1 and n2
 	if len(q.Neighbors[level]) != 2 {
@@ -325,16 +326,16 @@ func TestUpdateBidirectionalConnections(t *testing.T) {
 
 	// Verify that n1 and n2 are connected to q
 	foundInN1 := false
-	for _, node := range n1.Neighbors[level] {
-		if node.ID == q.ID {
+	for _, nodeID := range n1.Neighbors[level] {
+		if nodeID == q.ID {
 			foundInN1 = true
 			break
 		}
 	}
 
 	foundInN2 := false
-	for _, node := range n2.Neighbors[level] {
-		if node.ID == q.ID {
+	for _, nodeID := range n2.Neighbors[level] {
+		if nodeID == q.ID {
 			foundInN2 = true
 			break
 		}
@@ -447,8 +448,8 @@ func TestHNSWInsertionAlgorithm(t *testing.T) {
 			return false
 		}
 
-		for _, neighbor := range fromNode.Neighbors[level] {
-			if neighbor.ID == toID {
+		for _, neighborID := range fromNode.Neighbors[level] {
+			if neighborID == toID {
 				return true
 			}
 		}
@@ -542,10 +543,10 @@ func TestHNSWInsertionAlgorithm(t *testing.T) {
 			expectedNeighbors := expectedConnectionMap[nodeID][level]
 
 			// Check all actual connections
-			for _, neighbor := range node.Neighbors[level] {
-				if !expectedNeighbors[neighbor.ID] {
+			for _, neighborID := range node.Neighbors[level] {
+				if !expectedNeighbors[neighborID] {
 					t.Errorf("Node %d at level %d has unexpected connection to node %d",
-						nodeID, level, neighbor.ID)
+						nodeID, level, neighborID)
 				}
 			}
 
@@ -686,22 +687,13 @@ func TestNeighborSelectionQuality(t *testing.T) {
 	}
 
 	// Helper function to check if a node is in a slice of nodes
-	contains := func(nodes []*structs.Node, id int) bool {
+	contains := func(nodes []int, id int) bool {
 		for _, n := range nodes {
-			if n.ID == id {
+			if n == id {
 				return true
 			}
 		}
 		return false
-	}
-
-	// Helper function to convert node slice to ID slice for better error messages
-	getNodeIDs := func(nodes []*structs.Node) []int {
-		var ids []int
-		for _, n := range nodes {
-			ids = append(ids, n.ID)
-		}
-		return ids
 	}
 
 	// For each node, verify its connections at each level
@@ -724,17 +716,17 @@ func TestNeighborSelectionQuality(t *testing.T) {
 			for _, expectedID := range expectedNeighborIDs {
 				if !contains(node.Neighbors[level], expectedID) {
 					t.Errorf("Node %d at level %d should be connected to %d, but isn't. Actual connections: %v",
-						nodeID, level, expectedID, getNodeIDs(node.Neighbors[level]))
+						nodeID, level, expectedID, node.Neighbors[level])
 				}
 			}
 
 			// Check that there are no unexpected connections (optional - depends on how strict we want to be)
 			// This may fail if the algorithm finds equal-distance neighbors and makes different choices
 			if len(expectedNeighborIDs) > 0 { // Skip if we didn't specify expected connections
-				for _, neighbor := range node.Neighbors[level] {
+				for _, neighborID := range node.Neighbors[level] {
 					found := false
 					for _, expectedID := range expectedNeighborIDs {
-						if neighbor.ID == expectedID {
+						if neighborID == expectedID {
 							found = true
 							break
 						}
@@ -742,7 +734,7 @@ func TestNeighborSelectionQuality(t *testing.T) {
 
 					if !found {
 						t.Errorf("Node %d at level %d has unexpected connection to %d. Expected only: %v",
-							nodeID, level, neighbor.ID, expectedNeighborIDs)
+							nodeID, level, neighborID, expectedNeighborIDs)
 					}
 				}
 
@@ -750,7 +742,7 @@ func TestNeighborSelectionQuality(t *testing.T) {
 				if len(node.Neighbors[level]) != len(expectedNeighborIDs) {
 					t.Errorf("Node %d at level %d has %d connections, expected %d. Connections: %v, expected: %v",
 						nodeID, level, len(node.Neighbors[level]), len(expectedNeighborIDs),
-						getNodeIDs(node.Neighbors[level]), expectedNeighborIDs)
+						node.Neighbors[level], expectedNeighborIDs)
 				}
 			}
 		}
@@ -800,15 +792,15 @@ func TestNeighborSelectionQuality(t *testing.T) {
 			for _, nearestID := range nearestIDs {
 				if !contains(node.Neighbors[level], nearestID) {
 					t.Errorf("Node %d at level %d is not connected to one of its 4 nearest neighbors (node %d). Distances: %v, Connections: %v",
-						nodeID, level, nearestID, distances[:4], getNodeIDs(node.Neighbors[level]))
+						nodeID, level, nearestID, distances[:4], node.Neighbors[level])
 				}
 			}
 
 			// Each connection should be one of the 4 nearest neighbors
-			for _, neighbor := range node.Neighbors[level] {
+			for _, neighborID := range node.Neighbors[level] {
 				isNearest := false
 				for _, nearestID := range nearestIDs {
-					if neighbor.ID == nearestID {
+					if neighborID == nearestID {
 						isNearest = true
 						break
 					}
@@ -816,7 +808,7 @@ func TestNeighborSelectionQuality(t *testing.T) {
 
 				if !isNearest {
 					t.Errorf("Node %d at level %d is connected to node %d which is not one of its 4 nearest neighbors. Nearest: %v",
-						nodeID, level, neighbor.ID, nearestIDs)
+						nodeID, level, neighborID, nearestIDs)
 				}
 			}
 		}

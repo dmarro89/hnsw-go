@@ -14,7 +14,7 @@ type Node struct {
 
 	// Neighbors stores the IDs of neighboring nodes for each level
 	// The first index represents the level, the second index represents neighbors at that level
-	Neighbors [][]*Node
+	Neighbors [][]int
 }
 
 // NewNode creates a new Node with the specified parameters.
@@ -28,13 +28,14 @@ type Node struct {
 // Returns a pointer to the newly created Node.
 func NewNode(id int, vector []float32, level, maxLevel, mMax int, mMax0 int) *Node {
 	// Initialize neighbors slices with pre-allocated capacity
-	neighbors := make([][]*Node, level+1)
+	neighbors := make([][]int, level+1)
 	for i := range neighbors {
 		if i == 0 {
 			// Level 0 neighbors are initialized with a capacity of mMax0
-			neighbors[i] = make([]*Node, 0, mMax0)
+			neighbors[i] = make([]int, 0, mMax0)
 		} else {
-			neighbors[i] = make([]*Node, 0, mMax)
+			// All other levels should also have zero initial length but proper capacity
+			neighbors[i] = make([]int, 0, mMax)
 		}
 	}
 

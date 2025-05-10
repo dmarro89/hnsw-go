@@ -2,8 +2,6 @@ package hnsw
 
 import (
 	"testing"
-
-	"dmarro89.github.com/hnsw-go/structs"
 )
 
 // TestKNNSearchEmptyGraph verifies that KNN_Search returns nil when
@@ -59,8 +57,8 @@ func TestKNNSearchSingleElement(t *testing.T) {
 		t.Fatalf("Expected 1 result, got %d", len(results))
 	}
 
-	if results[0].ID != 0 {
-		t.Errorf("Expected node ID 0, got %d", results[0].ID)
+	if results[0] != 0 {
+		t.Errorf("Expected node ID 0, got %d", results[0])
 	}
 }
 
@@ -251,7 +249,7 @@ func TestSearchWithDifferentEfValues(t *testing.T) {
 	// Search with different ef values
 	efValues := []int{1, 3, 10, 20}
 
-	var previousResults []*structs.Node
+	var previousResults []int
 
 	for _, ef := range efValues {
 		results := h.KNN_Search(query, 5, ef)
@@ -263,8 +261,8 @@ func TestSearchWithDifferentEfValues(t *testing.T) {
 
 		// For ef > 1, results should improve or stay the same
 		if previousResults != nil {
-			lastDist := h.DistanceFunc(query, previousResults[len(previousResults)-1].Vector)
-			currentDist := h.DistanceFunc(query, results[len(results)-1].Vector)
+			lastDist := h.DistanceFunc(query, h.Nodes[previousResults[len(previousResults)-1]].Vector)
+			currentDist := h.DistanceFunc(query, h.Nodes[results[len(results)-1]].Vector)
 
 			// With higher ef, the furthest neighbor should be the same or closer
 			if currentDist > lastDist {
