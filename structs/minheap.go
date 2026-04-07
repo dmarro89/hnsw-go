@@ -2,13 +2,13 @@ package structs
 
 // MinHeap keeps elements in ascending order (smallest on top).
 type MinHeap struct {
-	nodes []*NodeHeap
+	nodes []NodeHeap
 }
 
 // NewMinHeap creates a new heap with initial capacity.
 func NewMinHeap() *MinHeap {
 	return &MinHeap{
-		nodes: make([]*NodeHeap, 0, 64),
+		nodes: make([]NodeHeap, 0, 64),
 	}
 }
 
@@ -18,15 +18,15 @@ func (h *MinHeap) Len() int {
 }
 
 // Push adds a new element and restores the heap property.
-func (h *MinHeap) Push(n *NodeHeap) {
+func (h *MinHeap) Push(n NodeHeap) {
 	h.nodes = append(h.nodes, n)
 	h.siftUp(len(h.nodes) - 1)
 }
 
 // Pop removes and returns the element with the minimum value.
-func (h *MinHeap) Pop() *NodeHeap {
+func (h *MinHeap) Pop() NodeHeap {
 	if len(h.nodes) == 0 {
-		return nil
+		return NodeHeap{}
 	}
 	min := h.nodes[0]
 	lastIndex := len(h.nodes) - 1
@@ -41,7 +41,7 @@ func (h *MinHeap) Peek() *NodeHeap {
 	if len(h.nodes) == 0 {
 		return nil
 	}
-	return h.nodes[0]
+	return &h.nodes[0]
 }
 
 // Reset empties the heap while maintaining the underlying capacity.

@@ -23,12 +23,67 @@ func BenchmarkHNSWConstruction(b *testing.B) {
 		}
 	}
 
-	// In math/rand/v2, dobbiamo creare un generatore esplicito con seed
-	// invece di usare rand.Seed()
-	rng := rand.New(rand.NewPCG(seedVal, seedVal))
+	configs := []struct {
+		name      string
+		numVecs   int
+		dimension int
+	}{
+		{"small", 1000, 128},
+		{"medium", 10000, 128},
+		{"large", 100000, 128},
+	}
+	efConstructionValues := []int{64}
 
-	// Forza GC prima dell'esecuzione
-	runtime.GC()
+	for cfgIndex, cfg := range configs {
+		// Genera i vettori una volta sola per tutti i run con lo stesso seed
+		rng := rand.New(rand.NewPCG(seedVal+uint64(cfgIndex), seedVal+uint64(cfgIndex)))
+		vectors := generateRandomVectorsWithRNG(cfg.numVecs, cfg.dimension, rng)
+
+		for _, efConstruction := range efConstructionValues {
+			b.Run(fmt.Sprintf("Build_%s_%dv_%dd_ef%d", cfg.name, cfg.numVecs, cfg.dimension, efConstruction), func(b *testing.B) {
+				b.ReportAllocs()
+				b.ResetTimer()
+
+				var totalInsertTime time.Duration
+				var totalVectors int64
+
+				for i := 0; i < b.N; i++ {
+					b.StopTimer()
+					hnsw, _ := hnsw.NewHNSW(hnsw.Config{
+						M:              16,
+						Mmax:           32,
+						Mmax0:          64,
+						EfConstruction: efConstruction,
+						MaxLevel:       16,
+						DistanceFunc:   hnsw.EuclideanDistance,
+					})
+					b.StartTimer()
+
+					startTime := time.Now()
+					hnsw.InsertBatch(vectors)
+					elapsed := time.Since(startTime)
+					b.StopTimer()
+
+					totalInsertTime += elapsed
+					totalVectors += int64(cfg.numVecs)
+				}
+
+				if totalInsertTime > 0 {
+					b.ReportMetric(float64(totalVectors)/totalInsertTime.Seconds(), "vectors/sec")
+				}
+			})
+		}
+	}
+}
+
+func BenchmarkHNSWParallelConstruction(b *testing.B) {
+	seedStr := os.Getenv("HNSW_RAND_SEED")
+	seedVal := uint64(42)
+	if seedStr != "" {
+		if val, err := strconv.ParseUint(seedStr, 10, 64); err == nil {
+			seedVal = val
+		}
+	}
 
 	configs := []struct {
 		name      string
@@ -40,48 +95,53 @@ func BenchmarkHNSWConstruction(b *testing.B) {
 		{"large", 100000, 128},
 	}
 
-	for _, cfg := range configs {
-		// Genera i vettori una volta sola per tutti i run con lo stesso seed
+	workers := runtime.GOMAXPROCS(0)
+	if workers < 1 {
+		workers = 1
+	}
+
+	for cfgIndex, cfg := range configs {
+		rng := rand.New(rand.NewPCG(seedVal+uint64(cfgIndex), seedVal+uint64(cfgIndex)))
 		vectors := generateRandomVectorsWithRNG(cfg.numVecs, cfg.dimension, rng)
 
-		b.Run(fmt.Sprintf("Build_%s_%dv_%dd", cfg.name, cfg.numVecs, cfg.dimension), func(b *testing.B) {
-			// Riporta informazioni sul sistema
-			fmt.Printf("NumCPU: %d, GOMAXPROCS: %d\n", runtime.NumCPU(), runtime.GOMAXPROCS(0))
-
-			b.ResetTimer()
+		b.Run(fmt.Sprintf("BuildParallel_%s_%dv_%dd", cfg.name, cfg.numVecs, cfg.dimension), func(b *testing.B) {
 			b.ReportAllocs()
+			b.ResetTimer()
 
 			var totalInsertTime time.Duration
-			var totalVectors int
+			var totalVectors int64
 
 			for i := 0; i < b.N; i++ {
 				b.StopTimer()
-				hnsw, _ := hnsw.NewHNSW(hnsw.Config{
+				index, _ := hnsw.NewHNSW(hnsw.Config{
 					M:              16,
-					Mmax:           8,
-					Mmax0:          16,
-					EfConstruction: 100,
+					Mmax:           32,
+					Mmax0:          64,
+					EfConstruction: 64,
 					MaxLevel:       16,
 					DistanceFunc:   hnsw.EuclideanDistance,
 				})
-				runtime.GC() // Forza GC prima dell'operazione
+				buildCfg := hnsw.BulkBuildConfig{
+					Workers:        workers,
+					BatchSize:      max(64, workers*16),
+					EfConstruction: 64,
+				}
 				b.StartTimer()
 
 				startTime := time.Now()
-				for j := 0; j < cfg.numVecs; j++ {
-					hnsw.Insert(vectors[j], j)
+				if err := index.BuildParallel(vectors, buildCfg); err != nil {
+					b.Fatalf("BuildParallel failed: %v", err)
 				}
 				elapsed := time.Since(startTime)
-				totalInsertTime += elapsed
-				totalVectors += cfg.numVecs
+				b.StopTimer()
 
-				vectorsPerSecond := float64(cfg.numVecs) / elapsed.Seconds()
-				b.ReportMetric(vectorsPerSecond, "vectors/sec")
+				totalInsertTime += elapsed
+				totalVectors += int64(cfg.numVecs)
 			}
 
-			// Riporta statistiche globali alla fine di tutti i run
-			avgVectorsPerSecond := float64(totalVectors) / totalInsertTime.Seconds()
-			fmt.Printf("Average insertion rate: %.2f vectors/sec\n", avgVectorsPerSecond)
+			if totalInsertTime > 0 {
+				b.ReportMetric(float64(totalVectors)/totalInsertTime.Seconds(), "vectors/sec")
+			}
 		})
 	}
 }

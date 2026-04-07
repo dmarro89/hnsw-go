@@ -476,12 +476,12 @@ func TestHNSWInsertionAlgorithm(t *testing.T) {
 		{1, 2, []int{0, 1, 3}}, // Node 2 also connects to nodes 1 and 3
 		{1, 3, []int{0, 1, 2}}, // Node 3 also connects to nodes 0 and 2
 
-		// Level 0 - all nodes should be connected to their nearest neighbors
-		{0, 0, []int{1, 2, 3, 4}}, // Node 0 connects to all nodes
+		// Level 0 - the new node is limited by M=3, while existing nodes can grow up to Mmax0
+		{0, 0, []int{1, 2, 3}},    // Node 0 keeps the three closest base-layer neighbors
 		{0, 1, []int{0, 2, 3, 4}}, // Node 1 also connects to node 2
 		{0, 2, []int{0, 1, 3, 4}}, // Node 2 connects to all nodes
 		{0, 3, []int{0, 1, 2, 4}}, // Node 3 connects to all nodes
-		{0, 4, []int{0, 1, 2, 3}}, // Node 4 connects to all nodes
+		{0, 4, []int{1, 2, 3}},    // Node 4 keeps only M neighbors at insertion time
 	}
 
 	// Create map for easy lookup of expected connections

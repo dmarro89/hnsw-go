@@ -1,8 +1,29 @@
 package hnsw
 
 import (
+	"math"
+	"reflect"
+
 	"dmarro89.github.com/hnsw-go/structs"
 )
+
+var euclideanDistancePC = reflect.ValueOf(EuclideanDistance).Pointer()
+
+type searchContext struct {
+	visitStamp int
+	visitedIDs []int
+	heapPool   *structs.HeapPoolManager
+}
+
+func newSearchContext(initialVisited int) *searchContext {
+	if initialVisited < 1 {
+		initialVisited = 1
+	}
+	return &searchContext{
+		visitedIDs: make([]int, initialVisited),
+		heapPool:   structs.NewHeapPoolManager(),
+	}
+}
 
 /*
 Algorithm 2
@@ -32,32 +53,73 @@ Space Complexity: O(ef + N) where N is the number of visited nodes
 
 Note: For ef=1, it automatically switches to a more efficient greedy search strategy.
 */
-func (h *HNSW) searchLayer(query []float32, entry *structs.Node, ef, level int) []int {
+func (h *HNSW) searchLayerWithEntriesBuffer(query []float32, entryIDs []int, ef, level int, dst []int) []int {
+	ctx := searchContext{
+		visitStamp: h.visitStamp,
+		visitedIDs: h.visitedIDs,
+		heapPool:   h.ensureHeapPool(),
+	}
+	results := searchLayerWithEntriesBufferContext(&ctx, h.Nodes, h.DistanceFunc, query, entryIDs, ef, level, dst)
+	h.visitStamp = ctx.visitStamp
+	h.visitedIDs = ctx.visitedIDs
+	return results
+}
+
+func searchLayerWithEntriesBufferContext(ctx *searchContext, nodes []*structs.Node, distance func([]float32, []float32) float32, query []float32, entryIDs []int, ef, level int, dst []int) []int {
 	//v ← ep  set of visited elements
 	// Increment the visit stamp for this search
 	// This is used to mark nodes as visited and avoid revisiting them
 	// in the same search iteration.
-	h.visitStamp++
+	ctx.visitStamp++
+	visitStamp := ctx.visitStamp
+
+	pool := ctx.heapPool
+	if pool == nil {
+		pool = structs.NewHeapPoolManager()
+		ctx.heapPool = pool
+	}
+	visitedIDs := ctx.visitedIDs
+	useBoundedDistance := reflect.ValueOf(distance).Pointer() == euclideanDistancePC
 
 	//C ← ep set of candidates
-	candidates := structs.NewMinHeap()
+	candidates := pool.GetMinHeap()
+	defer pool.PutMinHeap(candidates)
 	// W ← ep dynamic list of found nearest neighbors
-	nearest := structs.NewMaxHeap()
-	defer nearest.Reset()
-	defer candidates.Reset()
+	nearest := pool.GetMaxHeap()
+	defer pool.PutMaxHeap(nearest)
 
-	// Initialize with the entry point
-	initialDist := h.DistanceFunc(query, entry.Vector)
+	for _, entryID := range entryIDs {
+		if entryID < 0 || entryID >= len(nodes) {
+			continue
+		}
+		if entryID >= len(visitedIDs) {
+			newSize := max(entryID*2, entryID+1)
+			newVisited := make([]int, newSize)
+			copy(newVisited, visitedIDs)
+			visitedIDs = newVisited
+		}
+		if visitedIDs[entryID] == visitStamp {
+			continue
+		}
+		visitedIDs[entryID] = visitStamp
 
-	candidates.Push(structs.NewNodeHeap(initialDist, entry.ID))
-	nearest.Push(structs.NewNodeHeap(initialDist, entry.ID))
+		entry := nodes[entryID]
+		initialDist := distance(query, entry.Vector)
+		candidates.Push(structs.NewNodeHeap(initialDist, entry.ID))
+		nearest.Push(structs.NewNodeHeap(initialDist, entry.ID))
+		if nearest.Len() > ef {
+			nearest.Pop()
+		}
+	}
 
-	// Mark the entry point as visited
-	h.markVisited(entry.ID)
+	if candidates.Len() == 0 {
+		return nil
+	}
 
 	var (
 		currentDist  float32
-		furthestDist float32
+		furthestDist = float32(math.MaxFloat32)
+		nearestLen   = nearest.Len()
 	)
 
 	// while │C│ > 0
@@ -65,12 +127,14 @@ func (h *HNSW) searchLayer(query []float32, entry *structs.Node, ef, level int) 
 		// c ← extract nearest element from C to q
 		current := candidates.Pop()
 		currentDist = current.Dist
-		currentNode := h.Nodes[current.Id]
+		currentNode := nodes[current.Id]
 
 		// f ← get furthest element from W to q
-		if nearest.Len() > 0 {
+		if nearestLen >= ef {
 			furthest := nearest.Peek()
 			furthestDist = furthest.Dist
+		} else {
+			furthestDist = float32(math.MaxFloat32)
 		}
 
 		// if distance(c, q) > distance(f, q)
@@ -87,67 +151,99 @@ func (h *HNSW) searchLayer(query []float32, entry *structs.Node, ef, level int) 
 		for _, neighborID := range currentNode.Neighbors[level] {
 			// if e ∉ v
 			// v ← v ⋃ e
-			if h.markVisited(neighborID) {
+			if neighborID >= len(visitedIDs) {
+				newSize := max(neighborID*2, neighborID+1)
+				newVisited := make([]int, newSize)
+				copy(newVisited, visitedIDs)
+				visitedIDs = newVisited
+			}
+			if visitedIDs[neighborID] == visitStamp {
 				continue
 			}
+			visitedIDs[neighborID] = visitStamp
 
 			// f ← get furthest element from W to q
 			// if distance(e, q) < distance(f, q) or │W│ < ef
-			dist := h.DistanceFunc(query, h.Nodes[neighborID].Vector)
-			if dist < furthestDist || nearest.Len() < ef {
-
-				// C ← C ⋃ e
-				candidates.Push(structs.NewNodeHeap(dist, neighborID))
-				// W ← W ⋃ e
-				nearest.Push(structs.NewNodeHeap(dist, neighborID))
-
-				// if │W│ > ef
-				// remove furthest element from W to q
-				if nearest.Len() > ef {
-					nearest.Pop()
+			var dist float32
+			if nearestLen < ef || !useBoundedDistance {
+				dist = distance(query, nodes[neighborID].Vector)
+				if nearestLen >= ef && dist >= furthestDist {
+					continue
 				}
+			} else {
+				dist, exceeded := euclideanDistanceWithLimit(query, nodes[neighborID].Vector, furthestDist)
+				if exceeded || dist >= furthestDist {
+					continue
+				}
+			}
+
+			// C ← C ⋃ e
+			candidates.Push(structs.NewNodeHeap(dist, neighborID))
+			// W ← W ⋃ e
+			nearest.Push(structs.NewNodeHeap(dist, neighborID))
+			nearestLen++
+
+			// if │W│ > ef
+			// remove furthest element from W to q
+			if nearestLen > ef {
+				nearest.Pop()
+				nearestLen--
 			}
 		}
 	}
+	ctx.visitedIDs = visitedIDs
 
-	nearestLen := nearest.Len()
-	results := make([]int, nearestLen)
+	nearestLen = nearest.Len()
+	if cap(dst) < nearestLen {
+		dst = make([]int, nearestLen)
+	} else {
+		dst = dst[:nearestLen]
+	}
 
 	for i := nearestLen - 1; i >= 0; i-- {
 		item := nearest.Pop()
-		results[i] = item.Id
+		dst[i] = item.Id
 	}
 
-	return results
+	return dst
 }
 
 // greedySearchLayer performs a simple greedy search at a specific layer.
 // This is an optimization for ef=1 cases, following a simple hill-climbing approach.
 // It's used primarily during the upper layer searches in the HNSW algorithm.
 func (h *HNSW) greedySearchLayer(query []float32, entry *structs.Node, level int) *structs.Node {
+	return greedySearchLayerNodes(query, entry, level, h.Nodes, h.DistanceFunc)
+}
+
+func greedySearchLayerNodes(query []float32, entry *structs.Node, level int, nodes []*structs.Node, distance func([]float32, []float32) float32) *structs.Node {
 	currentNode := entry
-	bestDist := h.DistanceFunc(query, currentNode.Vector)
+	bestDist := distance(query, currentNode.Vector)
 
 	for {
-		improved := false
+		var (
+			bestNeighbor     *structs.Node
+			bestNeighborDist = bestDist
+		)
 
 		// Check all neighbors at this level
 		if level < len(currentNode.Neighbors) {
-			for _, neighborID := range currentNode.Neighbors[level] {
-				neighbor := h.Nodes[neighborID]
-				dist := h.DistanceFunc(query, neighbor.Vector)
-				if dist < bestDist {
-					bestDist = dist
-					currentNode = neighbor
-					improved = true
-					break // Take first improvement
+			neighbors := currentNode.Neighbors[level]
+			for _, neighborID := range neighbors {
+				neighbor := nodes[neighborID]
+				dist := distance(query, neighbor.Vector)
+				if dist < bestNeighborDist {
+					bestNeighborDist = dist
+					bestNeighbor = neighbor
 				}
 			}
 		}
 
-		if !improved {
+		if bestNeighbor == nil {
 			break
 		}
+
+		currentNode = bestNeighbor
+		bestDist = bestNeighborDist
 	}
 
 	return currentNode
@@ -205,9 +301,49 @@ func (h *HNSW) KNN_Search(query []float32, K, ef int) []int {
 	// Perform beam search at level 0 with ef size.
 	// W ← SEARCH-LAYER(q, ep, ef, lc=0)
 
-	candidates := h.searchLayer(query, entry, ef, 0)
+	resultsBuf := make([]int, 0, ef)
+	var entryIDs [1]int
+	entryIDs[0] = entry.ID
+	candidates := h.searchLayerWithEntriesBuffer(query, entryIDs[:], ef, 0, resultsBuf)
 
 	// Extract the top K nearest elements from W.
 	// return K nearest elements from W to q
+	if len(candidates) < K {
+		K = len(candidates)
+	}
 	return candidates[:K]
+}
+
+func euclideanDistanceWithLimit(a, b []float32, limit float32) (float32, bool) {
+	var sum0, sum1, sum2, sum3 float32
+	i := 0
+
+	for ; i <= len(a)-4; i += 4 {
+		d0 := a[i] - b[i]
+		d1 := a[i+1] - b[i+1]
+		d2 := a[i+2] - b[i+2]
+		d3 := a[i+3] - b[i+3]
+
+		sum0 += d0 * d0
+		sum1 += d1 * d1
+		sum2 += d2 * d2
+		sum3 += d3 * d3
+
+		total := sum0 + sum1 + sum2 + sum3
+		if total > limit {
+			return total, true
+		}
+	}
+
+	var sum float32
+	for ; i < len(a); i++ {
+		d := a[i] - b[i]
+		sum += d * d
+		total := sum + sum0 + sum1 + sum2 + sum3
+		if total > limit {
+			return total, true
+		}
+	}
+
+	return sum + sum0 + sum1 + sum2 + sum3, false
 }

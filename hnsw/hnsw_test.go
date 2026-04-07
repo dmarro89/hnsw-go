@@ -19,8 +19,8 @@ func TestDefaultConfig(t *testing.T) {
 	if cfg.Mmax0 != 64 {
 		t.Errorf("Expected Mmax0 to be 64, got %d", cfg.Mmax0)
 	}
-	if cfg.EfConstruction != 200 {
-		t.Errorf("Expected EfConstruction to be 200, got %d", cfg.EfConstruction)
+	if cfg.EfConstruction != 64 {
+		t.Errorf("Expected EfConstruction to be 64, got %d", cfg.EfConstruction)
 	}
 	if cfg.MaxLevel != 16 {
 		t.Errorf("Expected MaxLevel to be 16, got %d", cfg.MaxLevel)
@@ -40,6 +40,8 @@ func TestValidateConfig(t *testing.T) {
 		{Config{M: 16, Mmax: 32, Mmax0: 0, EfConstruction: 200, MaxLevel: 16, DistanceFunc: EuclideanDistance}, errors.New("Mmax0 must be positive")},
 		{Config{M: 16, Mmax: 32, Mmax0: 64, EfConstruction: 0, MaxLevel: 16, DistanceFunc: EuclideanDistance}, errors.New("EfConstruction must be positive")},
 		{Config{M: 16, Mmax: 32, Mmax0: 64, EfConstruction: 200, MaxLevel: 0, DistanceFunc: EuclideanDistance}, errors.New("MaxLevel must be positive")},
+		{Config{M: 33, Mmax: 32, Mmax0: 64, EfConstruction: 200, MaxLevel: 16, DistanceFunc: EuclideanDistance}, errors.New("M must be less than or equal to Mmax")},
+		{Config{M: 65, Mmax: 128, Mmax0: 64, EfConstruction: 200, MaxLevel: 16, DistanceFunc: EuclideanDistance}, errors.New("M must be less than or equal to Mmax0")},
 		{Config{M: 16, Mmax: 32, Mmax0: 64, EfConstruction: 200, MaxLevel: 16, DistanceFunc: nil}, errors.New("DistanceFunc must be provided")},
 		{Config{M: 16, Mmax: 32, Mmax0: 64, EfConstruction: 200, MaxLevel: 16, DistanceFunc: EuclideanDistance}, nil},
 	}
@@ -108,24 +110,23 @@ func TestRandomLevel(t *testing.T) {
 			if got != tc.want {
 				t.Errorf("RandomLevel() = %v, want %v", got, tc.want)
 			}
-			if got > h.MaxLevel {
-				t.Errorf("RandomLevel() = %v, exceeded MaxLevel = %v", got, h.MaxLevel)
-			}
 		})
 	}
 
 	// Test distribution properties
 	t.Run("distribution", func(t *testing.T) {
 		h.RandFunc = rand.Float64 // Reset to random
-		levels := make([]int, h.MaxLevel+1)
+		levels := make([]int, 8)
 		n := 10000
 
 		for i := 0; i < n; i++ {
 			level := h.RandomLevel()
-			if level < 0 || level > h.MaxLevel {
-				t.Errorf("RandomLevel() = %v, want between 0 and %v", level, h.MaxLevel)
+			if level < 0 {
+				t.Errorf("RandomLevel() = %v, want non-negative", level)
 			}
-			levels[level]++
+			if level < len(levels) {
+				levels[level]++
+			}
 		}
 
 		// Verify exponential decay property

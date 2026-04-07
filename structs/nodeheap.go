@@ -5,8 +5,8 @@ type NodeHeap struct {
 	Id   int
 }
 
-func NewNodeHeap(dist float32, id int) *NodeHeap {
-	return &NodeHeap{
+func NewNodeHeap(dist float32, id int) NodeHeap {
+	return NodeHeap{
 		Dist: dist,
 		Id:   id,
 	}

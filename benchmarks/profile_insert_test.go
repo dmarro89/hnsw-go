@@ -3,6 +3,7 @@ package benchmarks
 import (
 	"os"
 	"runtime/pprof"
+	"strconv"
 	"testing"
 
 	"dmarro89.github.com/hnsw-go/hnsw"
@@ -13,7 +14,12 @@ func TestHNSWInsertProfiling(t *testing.T) {
 		t.Skip("Saltando il profiling in modalità short")
 	}
 
-	numVectors := 1000
+	numVectors := 10000
+	if v := os.Getenv("HNSW_PROFILE_VECTORS"); v != "" {
+		if parsed, err := strconv.Atoi(v); err == nil && parsed > 0 {
+			numVectors = parsed
+		}
+	}
 	dimension := 128
 
 	// Genera vettori casuali
@@ -41,9 +47,9 @@ func TestHNSWInsertProfiling(t *testing.T) {
 	// Inizializza HNSW
 	h, err := hnsw.NewHNSW(hnsw.Config{
 		M:              16,
-		Mmax:           8,
-		Mmax0:          16,
-		EfConstruction: 200,
+		Mmax:           32,
+		Mmax0:          64,
+		EfConstruction: 64,
 		MaxLevel:       16,
 		DistanceFunc:   hnsw.EuclideanDistance,
 	})
@@ -52,9 +58,7 @@ func TestHNSWInsertProfiling(t *testing.T) {
 	}
 
 	// Esegui inserimenti
-	for i := 0; i < numVectors; i++ {
-		h.Insert(vectors[i], i)
-	}
+	h.InsertBatch(vectors)
 
 	// Scrivi profilo memoria
 	if err := pprof.WriteHeapProfile(memFile); err != nil {
