@@ -181,6 +181,12 @@ It should still be validated on your real dataset before making `BuildParallel` 
 
 ## Useful Commands
 
+CI runs the construction benchmarks automatically on `main`, on manual dispatch, and on a weekly schedule.
+Results are published in two places:
+
+- GitHub Actions job summary
+- uploaded artifact `hnsw-benchmarks-<run_id>`
+
 Run tests:
 
 ```bash
