@@ -22,32 +22,56 @@ import (
 // Time Complexity: O(log N) average case
 // Space Complexity: O(M * log N) where M is the max connections per layer
 func (h *HNSW) Insert(vector []float32, id int) {
+	h.mutex.Lock()
+	defer h.mutex.Unlock()
+
+	h.ensureNodeCapacity(len(h.Nodes) + 1)
+	h.insertLocked(vector, id, nil)
+}
+
+// InsertBatch appends a batch of vectors using contiguous IDs starting from the
+// current node count. It is optimized for single-threaded bulk construction.
+func (h *HNSW) InsertBatch(vectors [][]float32) {
+	h.mutex.Lock()
+	defer h.mutex.Unlock()
+
+	nextID := len(h.Nodes)
+	h.ensureNodeCapacity(nextID + len(vectors))
+	if len(vectors) > 0 {
+		h.ensureVisitedCapacity(nextID + len(vectors) - 1)
+	}
+	searchResultsBuf := make([]int, 0, h.EfConstruction)
+	for _, vector := range vectors {
+		searchResultsBuf = h.insertLocked(vector, nextID, searchResultsBuf)
+		nextID++
+	}
+}
+
+func (h *HNSW) insertLocked(vector []float32, id int, searchResultsBuf []int) []int {
 	if len(vector) == 0 {
 		panic("vector cannot be empty")
 	}
 
-	h.mutex.Lock()
-	defer h.mutex.Unlock()
+	if id != len(h.Nodes) {
+		panic("node id must be contiguous and match insertion order")
+	}
 
 	// l ← ⌊-ln(unif(0..1))∙mL⌋ // new element’s level
 	// Generate the level for the new node based on a random distribution.
 	level := h.RandomLevel()
 
-	newNode := structs.NewNode(id, vector, level, h.MaxLevel, h.Mmax, h.Mmax0)
+	newNode := h.appendNode(id, vector, level)
 	// Generate the level for the new node based on a random distribution.
 	if h.EntryPoint == nil {
 		h.EntryPoint = newNode
-		h.Nodes = append(h.Nodes, newNode)
-		return
+		return searchResultsBuf
 	}
 
 	// ep ← get entry point for hnsw
 	ep := h.EntryPoint
+	entryPoints := []int{ep.ID}
 	// L ← level of ep - top layer for hnsw
 	L := ep.Level
-
-	// Add the new node to the list of nodes in the graph
-	h.Nodes = append(h.Nodes, newNode)
 
 	// Phase 1: Descend through layers to find entry point for insertion
 	// This phase finds good starting points for the lower layer insertions
@@ -61,6 +85,7 @@ func (h *HNSW) Insert(vector []float32, id int) {
 
 		// Update entry point for next iteration
 		ep = newEp
+		entryPoints = []int{ep.ID}
 	}
 
 	// Phase 2: Connecting the new node at each layer from the minimum of (L, l) to the base layer (0).
@@ -69,7 +94,7 @@ func (h *HNSW) Insert(vector []float32, id int) {
 	for lc := maxLayer; lc >= 0; lc-- {
 		// W ← list for the currently found nearest elements
 		// W ← SEARCH-LAYER(q, ep, efConstruction, lc)
-		nearestNeighbors := h.searchLayer(vector, ep, h.EfConstruction, lc)
+		nearestNeighbors := h.searchLayerWithEntriesBuffer(vector, entryPoints, h.EfConstruction, lc, searchResultsBuf)
 
 		// Ensure that the number of connections does not exceed the allowed limit.
 		maxConn := h.Mmax
@@ -78,12 +103,14 @@ func (h *HNSW) Insert(vector []float32, id int) {
 		}
 
 		// neighbors ← SELECT-NEIGHBORS(q, W, M, lc)
-		neighbors := nearestNeighbors[:min(len(nearestNeighbors), maxConn)]
+		neighbors := nearestNeighbors[:min(len(nearestNeighbors), h.M)]
 		h.updateBidirectionalConnections(newNode, neighbors, lc, maxConn)
 
 		// ep ← W
 		if len(nearestNeighbors) > 0 {
 			ep = h.Nodes[nearestNeighbors[0]]
+			entryPoints = nearestNeighbors
+			searchResultsBuf = nearestNeighbors
 		}
 	}
 
@@ -92,6 +119,7 @@ func (h *HNSW) Insert(vector []float32, id int) {
 	if level > L {
 		h.EntryPoint = newNode
 	}
+	return searchResultsBuf
 }
 
 // updateBidirectionalConnections establishes and maintains bidirectional connections
@@ -106,12 +134,6 @@ func (h *HNSW) updateBidirectionalConnections(q *structs.Node, neighbors []int, 
 	// add bidirectional connections from neighbors to q at layer lc
 	q.Neighbors[level] = q.Neighbors[level][:0]                   // Reset and reuse the slice
 	q.Neighbors[level] = append(q.Neighbors[level], neighbors...) // Append neighbors
-
-	// Getting the candidates nodes for the neighbors from the pool
-	// and the temporary heap for the optimization process
-	tmpHeap := structs.NewMinHeap()
-	defer tmpHeap.Reset()
-	candidates := make([]int, 0, maxConn)
 
 	// for each e ∈ neighbors
 	for _, neighborID := range neighbors {
@@ -136,36 +158,72 @@ func (h *HNSW) updateBidirectionalConnections(q *structs.Node, neighbors []int, 
 			continue
 		}
 
-		// Optimize the neighbors' neighborhoods.
-		// Reset the candidates slice
-		candidates = candidates[:0]
-
-		// append q to the list of neighbors
-		qDist := h.DistanceFunc(q.Vector, neighbor.Vector)
-		tmpHeap.Push(structs.NewNodeHeap(qDist, q.ID))
-
-		// eConn ← neighborhood(neighbor) at layer level
-		eConn := neighbor.Neighbors[level]
-
-		for _, n := range eConn {
-			dist := h.DistanceFunc(neighbor.Vector, h.Nodes[n].Vector)
-			tmpHeap.Push(structs.NewNodeHeap(dist, n))
-		}
-
-		// Get the top maxConn neighbors
-		// Shrink the neighborhood if it exceeds the allowed limit.
-		for i := 0; i < maxConn && tmpHeap.Len() > 0; i++ {
-			item := tmpHeap.Pop()
-			candidates = append(candidates, item.Id)
-		}
-
-		// Clean up the heap
-		for tmpHeap.Len() > 0 {
-			tmpHeap.Pop()
-		}
+		// Optimize the neighbor's neighborhood by keeping the closest maxConn elements
+		// among the existing neighbors plus the new node.
+		candidates := h.selectClosestNeighborIDs(neighbor, neighbor.Neighbors[level], q.ID, maxConn)
 
 		// eNewConn ← SELECT-NEIGHBORS(e, eConn, Mmax, lc)
 		neighbor.Neighbors[level] = neighbor.Neighbors[level][:len(candidates)]
 		copy(neighbor.Neighbors[level], candidates)
 	}
+}
+
+func (h *HNSW) selectClosestNeighborIDs(target *structs.Node, existing []int, extraID, limit int) []int {
+	selectedIDs := h.scratchCandidatesBuffer(limit)
+	selectedDists := h.scratchDistancesBuffer(limit)
+
+	insertCandidate := func(id int, dist float32) {
+		insertPos := len(selectedIDs)
+		if insertPos == limit {
+			last := limit - 1
+			if dist > selectedDists[last] || (dist == selectedDists[last] && id >= selectedIDs[last]) {
+				return
+			}
+			insertPos = last
+		} else {
+			selectedIDs = append(selectedIDs, 0)
+			selectedDists = append(selectedDists, 0)
+		}
+
+		for insertPos > 0 {
+			prev := insertPos - 1
+			if dist > selectedDists[prev] || (dist == selectedDists[prev] && id >= selectedIDs[prev]) {
+				break
+			}
+			selectedIDs[insertPos] = selectedIDs[prev]
+			selectedDists[insertPos] = selectedDists[prev]
+			insertPos = prev
+		}
+
+		selectedIDs[insertPos] = id
+		selectedDists[insertPos] = dist
+	}
+
+	insertCandidate(extraID, h.DistanceFunc(target.Vector, h.Nodes[extraID].Vector))
+	for _, id := range existing {
+		insertCandidate(id, h.DistanceFunc(target.Vector, h.Nodes[id].Vector))
+	}
+
+	return selectedIDs
+}
+
+func containsNeighborID(ids []int, target int) bool {
+	for _, id := range ids {
+		if id == target {
+			return true
+		}
+	}
+	return false
+}
+
+func removeNeighborID(ids []int, target int) []int {
+	write := 0
+	for _, id := range ids {
+		if id == target {
+			continue
+		}
+		ids[write] = id
+		write++
+	}
+	return ids[:write]
 }

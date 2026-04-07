@@ -17,32 +17,41 @@ type Node struct {
 	Neighbors [][]int
 }
 
-// NewNode creates a new Node with the specified parameters.
-// Parameters:
-//   - id: unique identifier for the node
-//   - vector: coordinates of the node in the space
-//   - level: maximum level for this node
-//   - maxLevel: maximum number of levels in the graph
-//   - maxNeighbors: maximum number of neighbors per level
-//
-// Returns a pointer to the newly created Node.
-func NewNode(id int, vector []float32, level, maxLevel, mMax int, mMax0 int) *Node {
-	// Initialize neighbors slices with pre-allocated capacity
+// InitNode resets node in place with the specified parameters
+func InitNode(node *Node, id int, vector []float32, level, maxLevel, mMax int, mMax0 int) {
+	_ = maxLevel
+
 	neighbors := make([][]int, level+1)
-	for i := range neighbors {
-		if i == 0 {
-			// Level 0 neighbors are initialized with a capacity of mMax0
-			neighbors[i] = make([]int, 0, mMax0)
-		} else {
-			// All other levels should also have zero initial length but proper capacity
-			neighbors[i] = make([]int, 0, mMax)
-		}
+	totalCapacity := mMax0
+	if level > 0 {
+		totalCapacity += level * mMax
 	}
 
-	return &Node{
-		ID:        id,
-		Vector:    vector,
-		Level:     level,
-		Neighbors: neighbors,
+	neighborStorage := make([]int, totalCapacity)
+	offset := 0
+
+	for i := range neighbors {
+		levelCapacity := mMax
+		if i == 0 {
+			levelCapacity = mMax0
+		}
+		neighbors[i] = neighborStorage[offset : offset : offset+levelCapacity]
+		offset += levelCapacity
 	}
+
+	node.ID = id
+	node.Vector = vector
+	node.Level = level
+	node.Neighbors = neighbors
+}
+
+// NewNode creates a new Node with the specified parameters
+//
+// Neighbor storage is backed by a single contiguous slice partitioned per
+// level. This reduces the number of heap allocations per node and improves
+// cache locality during construction and search
+func NewNode(id int, vector []float32, level, maxLevel, mMax int, mMax0 int) *Node {
+	node := new(Node)
+	InitNode(node, id, vector, level, maxLevel, mMax, mMax0)
+	return node
 }

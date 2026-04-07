@@ -22,10 +22,6 @@ func TestNewNodeHeap(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			node := NewNodeHeap(tt.distance, tt.id)
 
-			if node == nil {
-				t.Fatal("NewNodeHeap returned nil")
-			}
-
 			if node.Dist != tt.distance {
 				t.Errorf("Distance = %v, want %v", node.Dist, tt.distance)
 			}

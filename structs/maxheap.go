@@ -2,13 +2,13 @@ package structs
 
 // MaxHeap keeps elements in descending order (largest on top).
 type MaxHeap struct {
-	nodes []*NodeHeap
+	nodes []NodeHeap
 }
 
 // NewMaxHeap creates a new max-heap with initial capacity.
 func NewMaxHeap() *MaxHeap {
 	return &MaxHeap{
-		nodes: make([]*NodeHeap, 0, 64),
+		nodes: make([]NodeHeap, 0, 64),
 	}
 }
 
@@ -18,15 +18,15 @@ func (h *MaxHeap) Len() int {
 }
 
 // Push adds a new element and restores the heap property.
-func (h *MaxHeap) Push(n *NodeHeap) {
+func (h *MaxHeap) Push(n NodeHeap) {
 	h.nodes = append(h.nodes, n)
 	h.siftUp(len(h.nodes) - 1)
 }
 
 // Pop removes and returns the element with the maximum value.
-func (h *MaxHeap) Pop() *NodeHeap {
+func (h *MaxHeap) Pop() NodeHeap {
 	if len(h.nodes) == 0 {
-		return nil
+		return NodeHeap{}
 	}
 	max := h.nodes[0]
 	lastIndex := len(h.nodes) - 1
@@ -41,7 +41,7 @@ func (h *MaxHeap) Peek() *NodeHeap {
 	if len(h.nodes) == 0 {
 		return nil
 	}
-	return h.nodes[0]
+	return &h.nodes[0]
 }
 
 // Reset empties the heap while maintaining the underlying capacity.
