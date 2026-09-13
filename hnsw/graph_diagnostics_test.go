@@ -1,6 +1,7 @@
 package hnsw
 
 import (
+	"container/heap"
 	"fmt"
 	"math/rand/v2"
 	"sort"
@@ -65,6 +66,8 @@ func TestGraphDiagnostics(t *testing.T) {
 	efSweep := []int{128, 256, 512, 1024, 2048, n}
 	layer0Recall := make([]float64, len(efSweep))
 	layer0Returned := make([]int, len(efSweep))
+	referenceRecall := make([]float64, len(efSweep))
+	referenceReturned := make([]int, len(efSweep))
 
 	for qi := 0; qi < queryCount; qi++ {
 		query := make([]float32, dim)
@@ -81,10 +84,6 @@ func TestGraphDiagnostics(t *testing.T) {
 		recall64 += diagnosticRecall(truth, h.KNN_Search(query, k, 64))
 		recall128 += diagnosticRecall(truth, h.KNN_Search(query, k, 128))
 
-		// Bypass all upper-layer routing and run SEARCH-LAYER directly from the
-		// global entry point at layer 0. Increasing ef all the way to N tells us
-		// whether the layer-0 search itself can eventually recover exact nearest
-		// neighbors on a graph that the connectivity diagnostic proved reachable.
 		for i, ef := range efSweep {
 			ctx := newSearchContext(len(h.Nodes))
 			got := searchLayerWithEntriesBufferContext(ctx, h.Nodes, h.DistanceFunc, query, []int{h.EntryPoint.ID}, ef, 0, nil)
@@ -93,6 +92,13 @@ func TestGraphDiagnostics(t *testing.T) {
 				got = got[:k]
 			}
 			layer0Recall[i] += diagnosticRecall(truth, got)
+
+			ref := referenceSearchLayer(h, query, h.EntryPoint.ID, ef, 0)
+			referenceReturned[i] += len(ref)
+			if len(ref) > k {
+				ref = ref[:k]
+			}
+			referenceRecall[i] += diagnosticRecall(truth, ref)
 		}
 	}
 
@@ -101,8 +107,100 @@ func TestGraphDiagnostics(t *testing.T) {
 		recall32/queryCount, recall64/queryCount, recall128/queryCount)
 
 	for i, ef := range efSweep {
-		t.Logf("layer0-only ef=%d recall@10=%.4f avgReturned=%.1f", ef, layer0Recall[i]/queryCount, float64(layer0Returned[i])/queryCount)
+		t.Logf("search-layer ef=%d currentRecall@10=%.4f referenceRecall@10=%.4f currentReturned=%.1f referenceReturned=%.1f",
+			ef, layer0Recall[i]/queryCount, referenceRecall[i]/queryCount,
+			float64(layer0Returned[i])/queryCount, float64(referenceReturned[i])/queryCount)
 	}
+}
+
+// referenceSearchLayer is a deliberately simple Algorithm 2 oracle used only
+// by diagnostics. It uses the standard library heap, full (unbounded) distance
+// evaluations and refreshes the current furthest result after every mutation.
+func referenceSearchLayer(h *HNSW, query []float32, entryID, ef, level int) []int {
+	visited := make([]bool, len(h.Nodes))
+	candidates := &diagnosticHeap{min: true}
+	nearest := &diagnosticHeap{min: false}
+	heap.Init(candidates)
+	heap.Init(nearest)
+
+	entryDist := h.DistanceFunc(query, h.Nodes[entryID].Vector)
+	heap.Push(candidates, diagnosticHeapItem{id: entryID, dist: entryDist})
+	heap.Push(nearest, diagnosticHeapItem{id: entryID, dist: entryDist})
+	visited[entryID] = true
+
+	for candidates.Len() > 0 {
+		current := heap.Pop(candidates).(diagnosticHeapItem)
+		furthest := nearest.items[0].dist
+		if nearest.Len() >= ef && current.dist > furthest {
+			break
+		}
+
+		node := h.Nodes[current.id]
+		if level >= len(node.Neighbors) {
+			continue
+		}
+		for _, neighborID := range node.Neighbors[level] {
+			if visited[neighborID] {
+				continue
+			}
+			visited[neighborID] = true
+			dist := h.DistanceFunc(query, h.Nodes[neighborID].Vector)
+
+			// Algorithm 2: admit the candidate if W is not full yet or if it is
+			// closer than the current furthest element in W. Re-read the heap root
+			// for every neighbor so the threshold can never become stale.
+			if nearest.Len() < ef || dist < nearest.items[0].dist {
+				heap.Push(candidates, diagnosticHeapItem{id: neighborID, dist: dist})
+				heap.Push(nearest, diagnosticHeapItem{id: neighborID, dist: dist})
+				if nearest.Len() > ef {
+					heap.Pop(nearest)
+				}
+			}
+		}
+	}
+
+	out := make([]diagnosticHeapItem, nearest.Len())
+	for i := len(out) - 1; i >= 0; i-- {
+		out[i] = heap.Pop(nearest).(diagnosticHeapItem)
+	}
+	ids := make([]int, len(out))
+	for i := range out {
+		ids[i] = out[i].id
+	}
+	return ids
+}
+
+type diagnosticHeapItem struct {
+	id   int
+	dist float32
+}
+
+type diagnosticHeap struct {
+	items []diagnosticHeapItem
+	min   bool
+}
+
+func (h diagnosticHeap) Len() int { return len(h.items) }
+func (h diagnosticHeap) Less(i, j int) bool {
+	if h.items[i].dist == h.items[j].dist {
+		if h.min {
+			return h.items[i].id < h.items[j].id
+		}
+		return h.items[i].id > h.items[j].id
+	}
+	if h.min {
+		return h.items[i].dist < h.items[j].dist
+	}
+	return h.items[i].dist > h.items[j].dist
+}
+func (h diagnosticHeap) Swap(i, j int) { h.items[i], h.items[j] = h.items[j], h.items[i] }
+func (h *diagnosticHeap) Push(x any)   { h.items = append(h.items, x.(diagnosticHeapItem)) }
+func (h *diagnosticHeap) Pop() any {
+	old := h.items
+	n := len(old)
+	x := old[n-1]
+	h.items = old[:n-1]
+	return x
 }
 
 func diagnosticVectors(n, dim int, seed uint64) [][]float32 {
