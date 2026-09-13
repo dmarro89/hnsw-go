@@ -126,7 +126,7 @@ func searchLayerWithEntriesBufferContext(ctx *searchContext, nodes []*structs.No
 	}
 
 	if candidates.Len() == 0 {
-		return nil
+		return dst[:0]
 	}
 
 	var (
@@ -248,13 +248,20 @@ func greedySearchLayerNodes(query []float32, entry *structs.Node, level int, nod
 }
 
 // KNN_Search performs a K-nearest neighbor search in the HNSW graph.
-// This implements Algorithm 5 from the original HNSW paper, using a two-phase search:
-// 1. Greedy search through upper layers to find entry point for layer 0
-// 2. Beam search at layer 0 to find the K nearest neighbors
-//
-// KNN_Search is safe to call concurrently. Each query uses isolated pooled
-// search scratch while the graph remains protected by a shared read lock.
+// It is safe to call concurrently. The returned slice is newly allocated for
+// the caller; use SearchInto to reuse caller-provided result storage.
 func (h *HNSW) KNN_Search(query []float32, K, ef int) []int {
+	return h.SearchInto(query, K, ef, nil)
+}
+
+// SearchInto performs a K-nearest neighbor search while reusing dst for the
+// final candidate list. Providing dst with capacity >= ef avoids the result
+// allocation on the hot query path. The returned slice aliases dst when its
+// capacity is sufficient.
+//
+// SearchInto is safe to call concurrently as long as each active call owns its
+// dst buffer. Passing the same backing array to simultaneous calls is not safe.
+func (h *HNSW) SearchInto(query []float32, K, ef int, dst []int) []int {
 	if ef < K {
 		ef = K
 	}
@@ -263,7 +270,7 @@ func (h *HNSW) KNN_Search(query []float32, K, ef int) []int {
 	defer h.mutex.RUnlock()
 
 	if h.EntryPoint == nil {
-		return nil
+		return dst[:0]
 	}
 
 	entry := h.EntryPoint
@@ -280,10 +287,9 @@ func (h *HNSW) KNN_Search(query []float32, K, ef int) []int {
 	ctx := h.acquireSearchContext(max(len(h.Nodes), ef))
 	defer h.releaseSearchContext(ctx)
 
-	resultsBuf := make([]int, 0, ef)
 	var entryIDs [1]int
 	entryIDs[0] = entry.ID
-	candidates := searchLayerWithEntriesBufferContext(ctx, h.Nodes, h.DistanceFunc, query, entryIDs[:], ef, 0, resultsBuf)
+	candidates := searchLayerWithEntriesBufferContext(ctx, h.Nodes, h.DistanceFunc, query, entryIDs[:], ef, 0, dst[:0])
 
 	if len(candidates) < K {
 		K = len(candidates)
