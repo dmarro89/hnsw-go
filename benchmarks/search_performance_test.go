@@ -49,6 +49,23 @@ func BenchmarkHNSWSearchPerformance(b *testing.B) {
 		})
 	}
 
+	b.Run("20k_128d_k10_ef64_into", func(b *testing.B) {
+		const efSearch = 64
+		recall := averageRecallAtK(index, queries, groundTruth, k, efSearch)
+		b.ReportMetric(recall*100, "recall@10_pct")
+		b.ReportAllocs()
+		resultsBuf := make([]int, 0, efSearch)
+		b.ResetTimer()
+		for i := 0; i < b.N; i++ {
+			query := queries[i&(numQueries-1)]
+			results := index.SearchInto(query, k, efSearch, resultsBuf)
+			if len(results) != k {
+				b.Fatalf("expected %d results, got %d", k, len(results))
+			}
+			resultsBuf = results[:0]
+		}
+	})
+
 	b.Run("20k_128d_k10_ef64_parallel", func(b *testing.B) {
 		const efSearch = 64
 		recall := averageRecallAtK(index, queries, groundTruth, k, efSearch)
