@@ -78,15 +78,13 @@ jobs:
             -bench '^BenchmarkHNSWSearchPerformance$' \
             -benchmem -benchtime=2s -count=3 | tee .artifacts/search.txt
 
-      - name: Report quality diagnostics
+      - name: Run quality gates and diagnostics
         shell: bash
         run: |
           set -euo pipefail
           go test ./benchmarks \
-            -run 'Test(EfConstructionRecallTradeoff|ParallelBuildRecallTradeoff)$' \
+            -run 'Test(SearchQualityMatrix|EfConstructionRecallTradeoff|ParallelBuildRecallTradeoff)$' \
             -v | tee .artifacts/quality.txt
-          echo >> .artifacts/quality.txt
-          echo 'SearchQualityMatrix is temporarily excluded from the benchmark CI gate: its historical recall floors do not match the current deterministic graph quality and require a separate algorithm-quality investigation.' >> .artifacts/quality.txt
 
       - name: Publish benchmark summary
         if: always()
