@@ -24,7 +24,7 @@ func BenchmarkHNSWSearchPerformance(b *testing.B) {
 	vectors := generateRandomVectorsWithRNG(numVectors, dimension, datasetRNG)
 	queries := generateRandomVectorsWithRNG(numQueries, dimension, queryRNG)
 
-	index, _ := buildIndexForQualityTest(b, vectors, 64)
+	index := buildIndexForSearchBenchmark(b, vectors, 64)
 
 	groundTruth := make([][]int, len(queries))
 	for i, query := range queries {
@@ -47,6 +47,27 @@ func BenchmarkHNSWSearchPerformance(b *testing.B) {
 			}
 		})
 	}
+}
+
+func buildIndexForSearchBenchmark(b *testing.B, vectors [][]float32, efConstruction int) *hnsw.HNSW {
+	b.Helper()
+
+	index, err := hnsw.NewHNSW(hnsw.Config{
+		M:              16,
+		Mmax:           32,
+		Mmax0:          64,
+		EfConstruction: efConstruction,
+		MaxLevel:       16,
+		DistanceFunc:   hnsw.EuclideanDistance,
+	})
+	if err != nil {
+		b.Fatalf("failed to create HNSW: %v", err)
+	}
+
+	levelRNG := rand.New(rand.NewPCG(5050, 5050))
+	index.RandFunc = levelRNG.Float64
+	index.InsertBatch(vectors)
+	return index
 }
 
 // TestSearchQualityMatrix is a deterministic quality regression test. The
@@ -84,5 +105,3 @@ func TestSearchQualityMatrix(t *testing.T) {
 		}
 	}
 }
-
-var _ = hnsw.EuclideanDistance
