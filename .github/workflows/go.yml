@@ -128,4 +128,5 @@ jobs:
         with:
           name: hnsw-performance-${{ github.run_id }}
           path: ${{ github.workspace }}/.artifacts
+          include-hidden-files: true
           if-no-files-found: error
