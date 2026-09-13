@@ -55,6 +55,16 @@ jobs:
             -bench 'BenchmarkHNSW(Parallel)?Construction/(Build_(small|medium|large)_.*_ef64|BuildParallel_(small|medium|large)_.*)' \
             -benchmem -benchtime=1x | tee .artifacts/construction.txt
 
+      - name: Compare serial and parallel construction
+        shell: bash
+        env:
+          HNSW_CONSTRUCTION_COMPARISON: "1"
+          HNSW_CONSTRUCTION_COMPARISON_OUTPUT: .artifacts/construction-comparison.md
+        run: |
+          set -euo pipefail
+          go test ./benchmarks -run '^TestConstructionComparison$' -count=1 -v \
+            | tee .artifacts/construction-comparison.txt
+
       - name: Run search latency and recall benchmarks
         shell: bash
         run: |
@@ -78,7 +88,13 @@ jobs:
           {
             echo "## Performance And Quality Summary"
             echo
-            echo "### Construction"
+            echo "### Serial vs parallel construction"
+            echo
+            cat .artifacts/construction-comparison.md
+            echo
+            echo "> Peak heap delta is sampled every 5 ms and excludes the pre-generated input vectors. Total allocated is cumulative allocation traffic during the build."
+            echo
+            echo "### Construction benchmark details"
             echo '```text'
             sed -n '/^goos:/,$p' .artifacts/construction.txt
             echo '```'
