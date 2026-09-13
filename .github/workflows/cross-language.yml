@@ -47,6 +47,12 @@ jobs:
           mkdir -p .artifacts
           python benchmarks/crosslang/compare.py | tee .artifacts/cross-language.md
 
+      - name: Run common-ground-truth quality matrix
+        shell: bash
+        run: |
+          set -euo pipefail
+          python benchmarks/crosslang/quality.py | tee .artifacts/cross-language-quality.md
+
       - name: Publish comparison
         if: always()
         shell: bash
@@ -57,6 +63,12 @@ jobs:
             if [[ -f .artifacts/cross-language.md ]]; then cat .artifacts/cross-language.md; fi
             echo
             echo "> Same deterministic float32 dataset, 128 dimensions, M=16, efConstruction=64/200, 10k/100k vectors, 1/4 threads. External-engine memory is peak process RSS; hnsw-go memory is live Go heap delta, so memory columns are diagnostic rather than directly equivalent."
+            echo
+            echo "## Common-ground-truth Recall@10"
+            echo
+            if [[ -f .artifacts/cross-language-quality.md ]]; then cat .artifacts/cross-language-quality.md; fi
+            echo
+            echo "> Recall uses the same 100 deterministic queries and exact squared-L2 ground truth for all engines. efSearch is tested at 32, 64, and 128."
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload raw results
