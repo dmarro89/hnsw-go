@@ -33,6 +33,99 @@ type insertionProposal struct {
 	neighbors [][]int
 }
 
+type proposalJob struct {
+	idx           int
+	snapshotNodes []*structs.Node
+	snapshotEntry *structs.Node
+	vector        []float32
+	id            int
+	level         int
+}
+
+type proposalResult struct {
+	idx      int
+	proposal insertionProposal
+}
+
+// proposalWorkerPool owns the per-worker search scratch for the whole build.
+// Keeping workers alive across batches prevents rebuilding visited-ID arrays
+// proportional to the current graph size for every batch.
+type proposalWorkerPool struct {
+	jobs    chan proposalJob
+	results chan proposalResult
+	wg      sync.WaitGroup
+}
+
+func newProposalWorkerPool(h *HNSW, workers, batchSize, efConstruction, initialVisited int) *proposalWorkerPool {
+	pool := &proposalWorkerPool{
+		jobs:    make(chan proposalJob, batchSize),
+		results: make(chan proposalResult, batchSize),
+	}
+
+	for worker := 0; worker < workers; worker++ {
+		pool.wg.Add(1)
+		go func() {
+			defer pool.wg.Done()
+
+			ctx := newSearchContext(max(initialVisited, efConstruction))
+			searchResultsBuf := make([]int, 0, efConstruction)
+			entryPointsBuf := make([]int, 0, efConstruction)
+
+			for job := range pool.jobs {
+				proposal, nextResultsBuf, nextEntryPointsBuf := h.computeInsertionProposal(
+					job.snapshotNodes,
+					job.snapshotEntry,
+					job.vector,
+					job.id,
+					job.level,
+					efConstruction,
+					ctx,
+					searchResultsBuf,
+					entryPointsBuf,
+				)
+				searchResultsBuf = nextResultsBuf
+				entryPointsBuf = nextEntryPointsBuf
+				pool.results <- proposalResult{idx: job.idx, proposal: proposal}
+			}
+		}()
+	}
+
+	return pool
+}
+
+func (p *proposalWorkerPool) compute(
+	snapshotNodes []*structs.Node,
+	snapshotEntry *structs.Node,
+	vectors [][]float32,
+	levels []int,
+	startID int,
+) []insertionProposal {
+	proposals := make([]insertionProposal, len(vectors))
+
+	for i := range vectors {
+		p.jobs <- proposalJob{
+			idx:           i,
+			snapshotNodes: snapshotNodes,
+			snapshotEntry: snapshotEntry,
+			vector:        vectors[i],
+			id:            startID + i,
+			level:         levels[i],
+		}
+	}
+
+	for range vectors {
+		result := <-p.results
+		proposals[result.idx] = result.proposal
+	}
+
+	return proposals
+}
+
+func (p *proposalWorkerPool) close() {
+	close(p.jobs)
+	p.wg.Wait()
+}
+
 // BuildParallel appends vectors using a dedicated parallel bulk-construction path.
 //
 // The expensive search phase runs in parallel on a read-only snapshot of the graph.
@@ -107,6 +200,20 @@ func (h *HNSW) BuildParallel(vectors [][]float32, cfg BulkBuildConfig) error {
 		start = 1
 	}
 
+	if start >= len(vectors) {
+		return nil
+	}
+
+	workerCount := min(cfg.Workers, min(cfg.BatchSize, len(vectors)-start))
+	workers := newProposalWorkerPool(
+		h,
+		workerCount,
+		cfg.BatchSize,
+		cfg.EfConstruction,
+		max(len(h.Nodes), cfg.EfConstruction),
+	)
+	defer workers.close()
+
 	for batchStart := start; batchStart < len(vectors); batchStart += cfg.BatchSize {
 		batchEnd := min(batchStart+cfg.BatchSize, len(vectors))
 		snapshotNodes := h.Nodes
@@ -114,12 +221,7 @@ func (h *HNSW) BuildParallel(vectors [][]float32, cfg BulkBuildConfig) error {
 
 		batchVectors := vectors[batchStart:batchEnd]
 		batchLevels := levels[batchStart:batchEnd]
-		batchIDs := make([]int, len(batchVectors))
-		for i := range batchVectors {
-			batchIDs[i] = nextID + i
-		}
-
-		proposals := h.computeInsertionProposalsParallel(snapshotNodes, snapshotEntry, batchVectors, batchIDs, batchLevels, cfg)
+		proposals := workers.compute(snapshotNodes, snapshotEntry, batchVectors, batchLevels, nextID)
 		for i, proposal := range proposals {
 			h.applyInsertionProposal(batchVectors[i], proposal)
 		}
@@ -127,53 +229,6 @@ func (h *HNSW) BuildParallel(vectors [][]float32, cfg BulkBuildConfig) error {
 	}
 
 	return nil
-}
-
-func (h *HNSW) computeInsertionProposalsParallel(snapshotNodes []*structs.Node, snapshotEntry *structs.Node, vectors [][]float32, ids, levels []int, cfg BulkBuildConfig) []insertionProposal {
-	proposals := make([]insertionProposal, len(vectors))
-	if len(vectors) == 0 {
-		return proposals
-	}
-
-	workerCount := min(cfg.Workers, len(vectors))
-	jobs := make(chan int, len(vectors))
-	var wg sync.WaitGroup
-
-	for w := 0; w < workerCount; w++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-
-			ctx := newSearchContext(max(len(snapshotNodes), cfg.EfConstruction))
-			searchResultsBuf := make([]int, 0, cfg.EfConstruction)
-			entryPointsBuf := make([]int, 0, cfg.EfConstruction)
-
-			for idx := range jobs {
-				proposal, nextResultsBuf, nextEntryPointsBuf := h.computeInsertionProposal(
-					snapshotNodes,
-					snapshotEntry,
-					vectors[idx],
-					ids[idx],
-					levels[idx],
-					cfg.EfConstruction,
-					ctx,
-					searchResultsBuf,
-					entryPointsBuf,
-				)
-				proposals[idx] = proposal
-				searchResultsBuf = nextResultsBuf
-				entryPointsBuf = nextEntryPointsBuf
-			}
-		}()
-	}
-
-	for i := range vectors {
-		jobs <- i
-	}
-	close(jobs)
-	wg.Wait()
-
-	return proposals
 }
 
 func (h *HNSW) computeInsertionProposal(
