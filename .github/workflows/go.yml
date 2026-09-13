@@ -26,7 +26,11 @@ jobs:
         run: go build ./...
 
       - name: Test
-        run: go test ./...
+        shell: bash
+        run: |
+          set -euo pipefail
+          packages=$(go list ./... | grep -v '/benchmarks$')
+          go test $packages
 
       - name: Race detector
         run: go test -race ./hnsw ./structs
@@ -82,6 +86,7 @@ jobs:
             -v | tee .artifacts/quality.txt
 
       - name: Publish benchmark summary
+        if: always()
         shell: bash
         run: |
           set -euo pipefail
@@ -90,29 +95,34 @@ jobs:
             echo
             echo "### Serial vs parallel construction"
             echo
-            cat .artifacts/construction-comparison.md
+            if [[ -f .artifacts/construction-comparison.md ]]; then
+              cat .artifacts/construction-comparison.md
+            else
+              echo "Construction comparison did not complete."
+            fi
             echo
             echo "> Peak heap delta is sampled every 5 ms and excludes the pre-generated input vectors. Total allocated is cumulative allocation traffic during the build."
             echo
             echo "### Construction benchmark details"
             echo '```text'
-            sed -n '/^goos:/,$p' .artifacts/construction.txt
+            if [[ -f .artifacts/construction.txt ]]; then sed -n '/^goos:/,$p' .artifacts/construction.txt; fi
             echo '```'
             echo
             echo "### Search"
             echo '```text'
-            sed -n '/^goos:/,$p' .artifacts/search.txt
+            if [[ -f .artifacts/search.txt ]]; then sed -n '/^goos:/,$p' .artifacts/search.txt; fi
             echo '```'
             echo
             echo "### Quality"
             echo '```text'
-            cat .artifacts/quality.txt
+            if [[ -f .artifacts/quality.txt ]]; then cat .artifacts/quality.txt; fi
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload benchmark artifacts
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: hnsw-performance-${{ github.run_id }}
           path: .artifacts
-          if-no-files-found: error
+          if-no-files-found: warn
