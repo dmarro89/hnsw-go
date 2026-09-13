@@ -13,10 +13,8 @@ import (
 )
 
 func BenchmarkHNSWConstruction(b *testing.B) {
-	// Usa un seed fisso per generare sempre gli stessi vettori casuali
-	// Per disabilitare, impostare la variabile di ambiente HNSW_RAND_SEED=-1
 	seedStr := os.Getenv("HNSW_RAND_SEED")
-	seedVal := uint64(42) // default seed
+	seedVal := uint64(42)
 	if seedStr != "" {
 		if val, err := strconv.ParseUint(seedStr, 10, 64); err == nil {
 			seedVal = val
@@ -35,7 +33,6 @@ func BenchmarkHNSWConstruction(b *testing.B) {
 	efConstructionValues := []int{64}
 
 	for cfgIndex, cfg := range configs {
-		// Genera i vettori una volta sola per tutti i run con lo stesso seed
 		rng := rand.New(rand.NewPCG(seedVal+uint64(cfgIndex), seedVal+uint64(cfgIndex)))
 		vectors := generateRandomVectorsWithRNG(cfg.numVecs, cfg.dimension, rng)
 
@@ -49,7 +46,7 @@ func BenchmarkHNSWConstruction(b *testing.B) {
 
 				for i := 0; i < b.N; i++ {
 					b.StopTimer()
-					hnsw, _ := hnsw.NewHNSW(hnsw.Config{
+					index, _ := hnsw.NewHNSW(hnsw.Config{
 						M:              16,
 						Mmax:           32,
 						Mmax0:          64,
@@ -57,10 +54,13 @@ func BenchmarkHNSWConstruction(b *testing.B) {
 						MaxLevel:       16,
 						DistanceFunc:   hnsw.EuclideanDistance,
 					})
+					levelSeed := seedVal + 10_000 + uint64(cfgIndex)
+					levelRNG := rand.New(rand.NewPCG(levelSeed, levelSeed))
+					index.RandFunc = levelRNG.Float64
 					b.StartTimer()
 
 					startTime := time.Now()
-					hnsw.InsertBatch(vectors)
+					index.InsertBatch(vectors)
 					elapsed := time.Since(startTime)
 					b.StopTimer()
 
@@ -121,6 +121,9 @@ func BenchmarkHNSWParallelConstruction(b *testing.B) {
 					MaxLevel:       16,
 					DistanceFunc:   hnsw.EuclideanDistance,
 				})
+				levelSeed := seedVal + 20_000 + uint64(cfgIndex)
+				levelRNG := rand.New(rand.NewPCG(levelSeed, levelSeed))
+				index.RandFunc = levelRNG.Float64
 				buildCfg := hnsw.BulkBuildConfig{
 					Workers:        workers,
 					BatchSize:      max(64, workers*16),
@@ -146,7 +149,6 @@ func BenchmarkHNSWParallelConstruction(b *testing.B) {
 	}
 }
 
-// Versione modificata per accettare un generatore RNG esplicito
 func generateRandomVectorsWithRNG(count, dim int, rng *rand.Rand) [][]float32 {
 	vectors := make([][]float32, count)
 	for i := range vectors {
@@ -158,9 +160,7 @@ func generateRandomVectorsWithRNG(count, dim int, rng *rand.Rand) [][]float32 {
 	return vectors
 }
 
-// Manteniamo la vecchia funzione per compatibilità
 func generateRandomVectors(count, dim int) [][]float32 {
-	// Usiamo il generatore globale
 	vectors := make([][]float32, count)
 	for i := range vectors {
 		vectors[i] = make([]float32, dim)
