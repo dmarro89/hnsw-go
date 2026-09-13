@@ -70,10 +70,9 @@ func buildIndexForSearchBenchmark(b *testing.B, vectors [][]float32, efConstruct
 	return index
 }
 
-// TestSearchQualityMatrix is a deterministic quality regression test. The
-// threshold is intentionally permissive for the baseline commit; once the
-// neighbor-selection heuristic is measured, the PR tightens this gate to the
-// quality level actually demonstrated by the optimized implementation.
+// TestSearchQualityMatrix protects the current quality envelope. These floors
+// are deliberately below the deterministic baseline so normal runner noise is
+// harmless, while a material graph-quality regression still fails CI.
 func TestSearchQualityMatrix(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping search quality matrix in short mode")
@@ -85,6 +84,12 @@ func TestSearchQualityMatrix(t *testing.T) {
 		dimension  = 128
 		k          = 10
 	)
+
+	minimumRecall := map[int]float64{
+		32:  0.40,
+		64:  0.55,
+		128: 0.70,
+	}
 
 	datasetRNG := rand.New(rand.NewPCG(3030, 3030))
 	queryRNG := rand.New(rand.NewPCG(4040, 4040))
@@ -100,8 +105,8 @@ func TestSearchQualityMatrix(t *testing.T) {
 	for _, efSearch := range []int{32, 64, 128} {
 		recall := averageRecallAtK(index, queries, groundTruth, k, efSearch)
 		t.Logf("build=%s efSearch=%d recall@%d=%.4f", buildDuration, efSearch, k, recall)
-		if recall <= 0 {
-			t.Fatalf("invalid zero recall at efSearch=%d", efSearch)
+		if recall < minimumRecall[efSearch] {
+			t.Fatalf("recall regression at efSearch=%d: got %.4f, want >= %.4f", efSearch, recall, minimumRecall[efSearch])
 		}
 	}
 }
