@@ -63,9 +63,10 @@ jobs:
         shell: bash
         env:
           HNSW_CONSTRUCTION_COMPARISON: "1"
-          HNSW_CONSTRUCTION_COMPARISON_OUTPUT: .artifacts/construction-comparison.md
+          HNSW_CONSTRUCTION_COMPARISON_OUTPUT: ${{ github.workspace }}/.artifacts/construction-comparison.md
         run: |
           set -euo pipefail
+          mkdir -p .artifacts
           go test ./benchmarks -run '^TestConstructionComparison$' -count=1 -v \
             | tee .artifacts/construction-comparison.txt
 
