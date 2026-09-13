@@ -10,6 +10,8 @@ import (
 	"dmarro89.github.com/hnsw-go/hnsw"
 )
 
+const qualityLevelSeed uint64 = 5050
+
 func TestEfConstructionRecallTradeoff(t *testing.T) {
 	if testing.Short() {
 		t.Skip("Saltando il confronto recall/build time in modalità short")
@@ -109,7 +111,7 @@ func buildIndexForQualityTest(t *testing.T, vectors [][]float32, efConstruction 
 		t.Fatalf("Failed to create HNSW: %v", err)
 	}
 
-	levelRNG := rand.New(rand.NewPCG(uint64(efConstruction), uint64(efConstruction)))
+	levelRNG := rand.New(rand.NewPCG(qualityLevelSeed, qualityLevelSeed))
 	index.RandFunc = levelRNG.Float64
 
 	start := time.Now()
@@ -132,7 +134,7 @@ func buildParallelIndexForQualityTest(t *testing.T, vectors [][]float32, efConst
 		t.Fatalf("Failed to create HNSW: %v", err)
 	}
 
-	levelRNG := rand.New(rand.NewPCG(uint64(efConstruction), uint64(efConstruction)))
+	levelRNG := rand.New(rand.NewPCG(qualityLevelSeed, qualityLevelSeed))
 	index.RandFunc = levelRNG.Float64
 
 	buildCfg := hnsw.BulkBuildConfig{
