@@ -50,6 +50,14 @@ jobs:
         with:
           go-version-file: go.mod
 
+      - name: Run graph diagnostics
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .artifacts
+          go test ./hnsw -run '^TestGraphDiagnostics$' -count=1 -v \
+            | tee .artifacts/graph-diagnostics.txt
+
       - name: Run construction benchmarks
         shell: bash
         run: |
@@ -95,6 +103,11 @@ jobs:
           set -euo pipefail
           {
             echo "## Performance And Quality Summary"
+            echo
+            echo "### Graph diagnostics"
+            echo '```text'
+            if [[ -f .artifacts/graph-diagnostics.txt ]]; then cat .artifacts/graph-diagnostics.txt; fi
+            echo '```'
             echo
             echo "### Serial vs parallel construction"
             echo
