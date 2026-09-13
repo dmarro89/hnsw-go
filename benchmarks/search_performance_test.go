@@ -3,6 +3,7 @@ package benchmarks
 import (
 	"fmt"
 	"math/rand/v2"
+	"sync/atomic"
 	"testing"
 
 	"dmarro89.github.com/hnsw-go/hnsw"
@@ -47,6 +48,25 @@ func BenchmarkHNSWSearchPerformance(b *testing.B) {
 			}
 		})
 	}
+
+	b.Run("20k_128d_k10_ef64_parallel", func(b *testing.B) {
+		const efSearch = 64
+		recall := averageRecallAtK(index, queries, groundTruth, k, efSearch)
+		b.ReportMetric(recall*100, "recall@10_pct")
+		b.ReportAllocs()
+		var nextQuery atomic.Uint64
+		b.ResetTimer()
+		b.RunParallel(func(pb *testing.PB) {
+			for pb.Next() {
+				idx := nextQuery.Add(1) - 1
+				query := queries[idx&(numQueries-1)]
+				results := index.KNN_Search(query, k, efSearch)
+				if len(results) != k {
+					b.Fatalf("expected %d results, got %d", k, len(results))
+				}
+			}
+		})
+	})
 }
 
 func buildIndexForSearchBenchmark(b *testing.B, vectors [][]float32, efConstruction int) *hnsw.HNSW {

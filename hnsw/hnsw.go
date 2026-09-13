@@ -51,14 +51,18 @@ type HNSW struct {
 	// mutex is used to synchronize access and write to the HNSW index
 	mutex sync.RWMutex
 
-	// Versioning counter for faster visited node check
+	// Versioning counter for faster visited node check during construction.
 	visitStamp int
 
-	// Pre-allocated array for tracking visited nodes
+	// Pre-allocated array for tracking visited nodes during construction.
 	visitedIDs []int
 
-	// heapPool reuses temporary heaps during search and insertion.
+	// heapPool reuses temporary heaps during construction.
 	heapPool *structs.HeapPoolManager
+
+	// searchContextPool provides isolated reusable scratch state for concurrent
+	// read-only searches. Search contexts must never be shared by active queries.
+	searchContextPool sync.Pool
 
 	// scratchCandidates reuses temporary storage when pruning neighbors.
 	scratchCandidates []int

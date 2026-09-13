@@ -25,6 +25,25 @@ func newSearchContext(initialVisited int) *searchContext {
 	}
 }
 
+func (h *HNSW) acquireSearchContext(initialVisited int) *searchContext {
+	if initialVisited < 1 {
+		initialVisited = 1
+	}
+	if pooled := h.searchContextPool.Get(); pooled != nil {
+		ctx := pooled.(*searchContext)
+		if len(ctx.visitedIDs) < initialVisited {
+			ctx.visitedIDs = make([]int, initialVisited)
+			ctx.visitStamp = 0
+		}
+		return ctx
+	}
+	return newSearchContext(initialVisited)
+}
+
+func (h *HNSW) releaseSearchContext(ctx *searchContext) {
+	h.searchContextPool.Put(ctx)
+}
+
 /*
 Algorithm 2
 SEARCH-LAYER(q, ep, ef, lc)
@@ -66,10 +85,6 @@ func (h *HNSW) searchLayerWithEntriesBuffer(query []float32, entryIDs []int, ef,
 }
 
 func searchLayerWithEntriesBufferContext(ctx *searchContext, nodes []*structs.Node, distance func([]float32, []float32) float32, query []float32, entryIDs []int, ef, level int, dst []int) []int {
-	//v ← ep  set of visited elements
-	// Increment the visit stamp for this search
-	// This is used to mark nodes as visited and avoid revisiting them
-	// in the same search iteration.
 	ctx.visitStamp++
 	visitStamp := ctx.visitStamp
 
@@ -81,10 +96,8 @@ func searchLayerWithEntriesBufferContext(ctx *searchContext, nodes []*structs.No
 	visitedIDs := ctx.visitedIDs
 	useBoundedDistance := reflect.ValueOf(distance).Pointer() == euclideanDistancePC
 
-	//C ← ep set of candidates
 	candidates := pool.GetMinHeap()
 	defer pool.PutMinHeap(candidates)
-	// W ← ep dynamic list of found nearest neighbors
 	nearest := pool.GetMaxHeap()
 	defer pool.PutMaxHeap(nearest)
 
@@ -122,14 +135,11 @@ func searchLayerWithEntriesBufferContext(ctx *searchContext, nodes []*structs.No
 		nearestLen   = nearest.Len()
 	)
 
-	// while │C│ > 0
 	for candidates.Len() > 0 {
-		// c ← extract nearest element from C to q
 		current := candidates.Pop()
 		currentDist = current.Dist
 		currentNode := nodes[current.Id]
 
-		// f ← get furthest element from W to q
 		if nearestLen >= ef {
 			furthest := nearest.Peek()
 			furthestDist = furthest.Dist
@@ -137,8 +147,6 @@ func searchLayerWithEntriesBufferContext(ctx *searchContext, nodes []*structs.No
 			furthestDist = float32(math.MaxFloat32)
 		}
 
-		// if distance(c, q) > distance(f, q)
-		// break  -> all elements in W are evaluated
 		if currentDist > furthestDist {
 			break
 		}
@@ -147,10 +155,7 @@ func searchLayerWithEntriesBufferContext(ctx *searchContext, nodes []*structs.No
 			continue
 		}
 
-		// for each e ∈ neighbourhood(c) at layer lc
 		for _, neighborID := range currentNode.Neighbors[level] {
-			// if e ∉ v
-			// v ← v ⋃ e
 			if neighborID >= len(visitedIDs) {
 				newSize := max(neighborID*2, neighborID+1)
 				newVisited := make([]int, newSize)
@@ -162,8 +167,6 @@ func searchLayerWithEntriesBufferContext(ctx *searchContext, nodes []*structs.No
 			}
 			visitedIDs[neighborID] = visitStamp
 
-			// f ← get furthest element from W to q
-			// if distance(e, q) < distance(f, q) or │W│ < ef
 			var dist float32
 			if nearestLen < ef || !useBoundedDistance {
 				dist = distance(query, nodes[neighborID].Vector)
@@ -177,14 +180,10 @@ func searchLayerWithEntriesBufferContext(ctx *searchContext, nodes []*structs.No
 				}
 			}
 
-			// C ← C ⋃ e
 			candidates.Push(structs.NewNodeHeap(dist, neighborID))
-			// W ← W ⋃ e
 			nearest.Push(structs.NewNodeHeap(dist, neighborID))
 			nearestLen++
 
-			// if │W│ > ef
-			// remove furthest element from W to q
 			if nearestLen > ef {
 				nearest.Pop()
 				nearestLen--
@@ -225,7 +224,6 @@ func greedySearchLayerNodes(query []float32, entry *structs.Node, level int, nod
 			bestNeighborDist = bestDist
 		)
 
-		// Check all neighbors at this level
 		if level < len(currentNode.Neighbors) {
 			neighbors := currentNode.Neighbors[level]
 			for _, neighborID := range neighbors {
@@ -254,16 +252,8 @@ func greedySearchLayerNodes(query []float32, entry *structs.Node, level int, nod
 // 1. Greedy search through upper layers to find entry point for layer 0
 // 2. Beam search at layer 0 to find the K nearest neighbors
 //
-// Parameters:
-//   - query: the target vector to search for
-//   - K: number of nearest neighbors to return
-//   - ef: size of the dynamic candidate list (controls accuracy vs speed trade-off)
-//
-// Returns:
-//   - Slice of K nearest nodes, sorted by distance to query
-//
-// Note: ef should be >= K for meaningful results. Larger ef values give better
-// accuracy at the cost of slower search times.
+// KNN_Search is safe to call concurrently. Each query uses isolated pooled
+// search scratch while the graph remains protected by a shared read lock.
 func (h *HNSW) KNN_Search(query []float32, K, ef int) []int {
 	if ef < K {
 		ef = K
@@ -276,38 +266,25 @@ func (h *HNSW) KNN_Search(query []float32, K, ef int) []int {
 		return nil
 	}
 
-	// Set the entry point for the search.
-	// ep ← get entry point for hnsw
 	entry := h.EntryPoint
-
-	// Get the top layer of the entry point.
-	// L ← level of ep // top layer for hnsw
 	currentLevel := entry.Level
 
-	// Perform greedy search in higher levels (L to 1).
-	// for lc ← L … 1
 	for lc := currentLevel; lc > 0; lc-- {
-		// Perform SEARCH-LAYER(q, ep, ef=1, lc)
-		// Greedy search with ef=1 to find the closest element at the current level.
 		newEntry := h.greedySearchLayer(query, entry, lc)
 		if newEntry == nil {
 			break
 		}
-		// Update the entry point to the nearest element found.
-		// ep ← get nearest element from W to q
 		entry = newEntry
 	}
 
-	// Perform beam search at level 0 with ef size.
-	// W ← SEARCH-LAYER(q, ep, ef, lc=0)
+	ctx := h.acquireSearchContext(max(len(h.Nodes), ef))
+	defer h.releaseSearchContext(ctx)
 
 	resultsBuf := make([]int, 0, ef)
 	var entryIDs [1]int
 	entryIDs[0] = entry.ID
-	candidates := h.searchLayerWithEntriesBuffer(query, entryIDs[:], ef, 0, resultsBuf)
+	candidates := searchLayerWithEntriesBufferContext(ctx, h.Nodes, h.DistanceFunc, query, entryIDs[:], ef, 0, resultsBuf)
 
-	// Extract the top K nearest elements from W.
-	// return K nearest elements from W to q
 	if len(candidates) < K {
 		K = len(candidates)
 	}
