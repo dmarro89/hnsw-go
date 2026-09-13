@@ -1,0 +1,3 @@
+numpy==2.3.3
+hnswlib==0.8.0
+usearch==2.21.0
