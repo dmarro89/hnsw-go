@@ -32,9 +32,10 @@ jobs:
         with:
           python-version: "3.13"
           cache: pip
+          cache-dependency-path: benchmarks/crosslang/requirements.txt
 
       - name: Install comparison engines
-        run: python -m pip install --disable-pip-version-check numpy hnswlib usearch
+        run: python -m pip install --disable-pip-version-check -r benchmarks/crosslang/requirements.txt
 
       - name: Build Go benchmark runner
         run: go build ./benchmarks/crosslang/go
