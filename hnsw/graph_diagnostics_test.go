@@ -61,6 +61,11 @@ func TestGraphDiagnostics(t *testing.T) {
 	queryRNG := rand.New(rand.NewPCG(4040, 4040))
 	var recall32, recall64, recall128 float64
 	var reachableGT int
+
+	efSweep := []int{128, 256, 512, 1024, 2048, n}
+	layer0Recall := make([]float64, len(efSweep))
+	layer0Returned := make([]int, len(efSweep))
+
 	for qi := 0; qi < queryCount; qi++ {
 		query := make([]float32, dim)
 		for d := range query {
@@ -75,11 +80,29 @@ func TestGraphDiagnostics(t *testing.T) {
 		recall32 += diagnosticRecall(truth, h.KNN_Search(query, k, 32))
 		recall64 += diagnosticRecall(truth, h.KNN_Search(query, k, 64))
 		recall128 += diagnosticRecall(truth, h.KNN_Search(query, k, 128))
+
+		// Bypass all upper-layer routing and run SEARCH-LAYER directly from the
+		// global entry point at layer 0. Increasing ef all the way to N tells us
+		// whether the layer-0 search itself can eventually recover exact nearest
+		// neighbors on a graph that the connectivity diagnostic proved reachable.
+		for i, ef := range efSweep {
+			ctx := newSearchContext(len(h.Nodes))
+			got := searchLayerWithEntriesBufferContext(ctx, h.Nodes, h.DistanceFunc, query, []int{h.EntryPoint.ID}, ef, 0, nil)
+			layer0Returned[i] += len(got)
+			if len(got) > k {
+				got = got[:k]
+			}
+			layer0Recall[i] += diagnosticRecall(truth, got)
+		}
 	}
 
 	t.Logf("quality queries=%d k=%d groundTruthReachable=%d/%d (%.2f%%) recall@10 ef32=%.4f ef64=%.4f ef128=%.4f",
 		queryCount, k, reachableGT, queryCount*k, 100*float64(reachableGT)/float64(queryCount*k),
 		recall32/queryCount, recall64/queryCount, recall128/queryCount)
+
+	for i, ef := range efSweep {
+		t.Logf("layer0-only ef=%d recall@10=%.4f avgReturned=%.1f", ef, layer0Recall[i]/queryCount, float64(layer0Returned[i])/queryCount)
+	}
 }
 
 func diagnosticVectors(n, dim int, seed uint64) [][]float32 {
