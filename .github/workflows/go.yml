@@ -28,11 +28,15 @@ jobs:
       - name: Test
         run: go test ./...
 
+      - name: Race detector
+        run: go test -race ./hnsw ./structs
+
   benchmarks:
-    name: Benchmarks
+    name: Performance And Quality
     runs-on: ubuntu-latest
     needs: test
-    if: github.event_name != 'pull_request'
+    env:
+      GOMAXPROCS: 4
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -49,23 +53,50 @@ jobs:
           mkdir -p .artifacts
           go test ./benchmarks -run '^$' \
             -bench 'BenchmarkHNSW(Parallel)?Construction/(Build_(small|medium|large)_.*_ef64|BuildParallel_(small|medium|large)_.*)' \
-            -benchmem -benchtime=1x | tee .artifacts/benchmarks.txt
+            -benchmem -benchtime=1x | tee .artifacts/construction.txt
+
+      - name: Run search latency and recall benchmarks
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test ./benchmarks -run '^$' \
+            -bench '^BenchmarkHNSWSearchPerformance$' \
+            -benchmem -benchtime=2s -count=3 | tee .artifacts/search.txt
+
+      - name: Run deterministic quality matrix
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test ./benchmarks \
+            -run 'Test(SearchQualityMatrix|EfConstructionRecallTradeoff|ParallelBuildRecallTradeoff)$' \
+            -v | tee .artifacts/quality.txt
 
       - name: Publish benchmark summary
         shell: bash
         run: |
           set -euo pipefail
           {
-            echo "## Benchmark Summary"
+            echo "## Performance And Quality Summary"
             echo
+            echo "### Construction"
             echo '```text'
-            sed -n '/^goos:/,$p' .artifacts/benchmarks.txt
+            sed -n '/^goos:/,$p' .artifacts/construction.txt
+            echo '```'
+            echo
+            echo "### Search"
+            echo '```text'
+            sed -n '/^goos:/,$p' .artifacts/search.txt
+            echo '```'
+            echo
+            echo "### Quality"
+            echo '```text'
+            cat .artifacts/quality.txt
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Upload benchmark artifact
+      - name: Upload benchmark artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: hnsw-benchmarks-${{ github.run_id }}
-          path: .artifacts/benchmarks.txt
+          name: hnsw-performance-${{ github.run_id }}
+          path: .artifacts
           if-no-files-found: error
