@@ -1,0 +1,132 @@
+name: Distance kernel experiments
+
+on:
+  pull_request:
+    branches: ["main"]
+    paths:
+      - "benchmarks/distance_kernel_test.go"
+      - "benchmarks/distance_kernel_simd_test.go"
+      - ".github/workflows/distance-kernel.yml"
+  workflow_dispatch:
+
+jobs:
+  scalar:
+    name: Scalar distance kernels
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      GOMAXPROCS: 1
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Validate scalar candidates
+        run: go test ./benchmarks -run '^TestDistanceKernelVariantsAgree$' -count=1 -v
+
+      - name: Benchmark scalar kernels
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .artifacts
+          go test ./benchmarks -run '^$' -bench '^BenchmarkDistanceKernel$' -benchmem -benchtime=1s -count=5 | tee .artifacts/scalar-microbench.txt
+
+      - name: Measure scalar build impact
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test ./benchmarks -run '^$' -bench '^BenchmarkDistanceKernelBuildImpact$' -benchmem -benchtime=1x -count=3 | tee .artifacts/scalar-build-impact.txt
+
+      - name: Publish scalar results
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## Scalar distance kernel experiments"
+            echo
+            echo "### Microbenchmarks"
+            echo '```text'
+            cat .artifacts/scalar-microbench.txt 2>/dev/null || true
+            echo '```'
+            echo
+            echo "### 20k x 128d serial build impact"
+            echo '```text'
+            cat .artifacts/scalar-build-impact.txt 2>/dev/null || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload scalar results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: distance-kernel-scalar-${{ github.run_id }}
+          path: .artifacts
+          include-hidden-files: true
+          if-no-files-found: error
+
+  simd:
+    name: Go 1.26 archsimd kernels
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      GOMAXPROCS: 1
+      GOEXPERIMENT: simd
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Validate SIMD candidates
+        run: go test ./benchmarks -run '^TestDistanceKernelSIMDAgrees$' -count=1 -v
+
+      - name: Benchmark SIMD kernels
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .artifacts
+          go test ./benchmarks -run '^$' -bench '^BenchmarkDistanceKernelSIMD$' -benchmem -benchtime=1s -count=5 | tee .artifacts/simd-microbench.txt
+
+      - name: Measure SIMD build impact
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test ./benchmarks -run '^$' -bench '^BenchmarkDistanceKernelSIMDBuildImpact$' -benchmem -benchtime=1x -count=3 | tee .artifacts/simd-build-impact.txt
+
+      - name: Publish SIMD results
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## Go 1.26 archsimd distance kernel experiments"
+            echo
+            echo "> Experimental only: GOEXPERIMENT=simd, amd64 hosted runner. No production code uses archsimd in this PR."
+            echo
+            echo "### Microbenchmarks"
+            echo '```text'
+            cat .artifacts/simd-microbench.txt 2>/dev/null || true
+            echo '```'
+            echo
+            echo "### 20k x 128d serial build impact"
+            echo '```text'
+            cat .artifacts/simd-build-impact.txt 2>/dev/null || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload SIMD results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: distance-kernel-simd-${{ github.run_id }}
+          path: .artifacts
+          include-hidden-files: true
+          if-no-files-found: error
