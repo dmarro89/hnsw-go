@@ -1,7 +1,6 @@
 package hnsw
 
 import (
-	"math"
 	"reflect"
 
 	"dmarro89.github.com/hnsw-go/structs"
@@ -94,7 +93,6 @@ func searchLayerWithEntriesBufferContext(ctx *searchContext, nodes []*structs.No
 		ctx.heapPool = pool
 	}
 	visitedIDs := ctx.visitedIDs
-	useBoundedDistance := reflect.ValueOf(distance).Pointer() == euclideanDistancePC
 
 	candidates := pool.GetMinHeap()
 	defer pool.PutMinHeap(candidates)
@@ -129,25 +127,11 @@ func searchLayerWithEntriesBufferContext(ctx *searchContext, nodes []*structs.No
 		return dst[:0]
 	}
 
-	var (
-		currentDist  float32
-		furthestDist = float32(math.MaxFloat32)
-		nearestLen   = nearest.Len()
-	)
-
 	for candidates.Len() > 0 {
 		current := candidates.Pop()
-		currentDist = current.Dist
 		currentNode := nodes[current.Id]
 
-		if nearestLen >= ef {
-			furthest := nearest.Peek()
-			furthestDist = furthest.Dist
-		} else {
-			furthestDist = float32(math.MaxFloat32)
-		}
-
-		if currentDist > furthestDist {
+		if nearest.Len() >= ef && current.Dist > nearest.Peek().Dist {
 			break
 		}
 
@@ -156,6 +140,9 @@ func searchLayerWithEntriesBufferContext(ctx *searchContext, nodes []*structs.No
 		}
 
 		for _, neighborID := range currentNode.Neighbors[level] {
+			if neighborID < 0 || neighborID >= len(nodes) {
+				continue
+			}
 			if neighborID >= len(visitedIDs) {
 				newSize := max(neighborID*2, neighborID+1)
 				newVisited := make([]int, newSize)
@@ -167,32 +154,21 @@ func searchLayerWithEntriesBufferContext(ctx *searchContext, nodes []*structs.No
 			}
 			visitedIDs[neighborID] = visitStamp
 
-			var dist float32
-			if nearestLen < ef || !useBoundedDistance {
-				dist = distance(query, nodes[neighborID].Vector)
-				if nearestLen >= ef && dist >= furthestDist {
-					continue
-				}
-			} else {
-				dist, exceeded := euclideanDistanceWithLimit(query, nodes[neighborID].Vector, furthestDist)
-				if exceeded || dist >= furthestDist {
-					continue
-				}
+			dist := distance(query, nodes[neighborID].Vector)
+			if nearest.Len() >= ef && dist >= nearest.Peek().Dist {
+				continue
 			}
 
 			candidates.Push(structs.NewNodeHeap(dist, neighborID))
 			nearest.Push(structs.NewNodeHeap(dist, neighborID))
-			nearestLen++
-
-			if nearestLen > ef {
+			if nearest.Len() > ef {
 				nearest.Pop()
-				nearestLen--
 			}
 		}
 	}
 	ctx.visitedIDs = visitedIDs
 
-	nearestLen = nearest.Len()
+	nearestLen := nearest.Len()
 	if cap(dst) < nearestLen {
 		dst = make([]int, nearestLen)
 	} else {
