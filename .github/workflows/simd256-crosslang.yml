@@ -1,0 +1,81 @@
+name: SIMD256 cross-language experiment
+
+on:
+  pull_request:
+    branches: ["main"]
+    paths:
+      - "benchmarks/crosslang/simd256.py"
+      - "benchmarks/crosslang/simd256-go/**"
+      - ".github/workflows/simd256-crosslang.yml"
+      - "hnsw/**"
+      - "structs/**"
+      - "go.mod"
+  workflow_dispatch:
+
+jobs:
+  simd256:
+    name: Scalar vs SIMD256 build and recall
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      GOMAXPROCS: 1
+      GOEXPERIMENT: simd
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: benchmarks/crosslang/requirements.txt
+
+      - name: Install benchmark dependencies
+        run: python -m pip install --disable-pip-version-check -r benchmarks/crosslang/requirements.txt
+
+      - name: Build SIMD256 experiment runner
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .artifacts
+          go build -o .artifacts/simd256-go ./benchmarks/crosslang/simd256-go
+
+      - name: Run scalar vs SIMD256 matrix
+        shell: bash
+        run: |
+          set -euo pipefail
+          python benchmarks/crosslang/simd256.py | tee .artifacts/simd256-crosslang.md
+
+      - name: Publish SIMD256 comparison
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "# SIMD256 cross-language experiment"
+            echo
+            echo "> Experimental only: Go 1.26 GOEXPERIMENT=simd on amd64. The production distance kernel is unchanged."
+            echo
+            if [[ -f .artifacts/simd256-crosslang.md ]]; then
+              cat .artifacts/simd256-crosslang.md
+            else
+              echo "The SIMD256 matrix did not complete."
+            fi
+            echo
+            echo "> Dataset, query seeds, topology, and exact squared-L2 ground truth match the existing cross-language benchmark. The normal Go vs hnswlib vs USearch workflow runs independently on the same PR."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload SIMD256 results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: simd256-crosslang-${{ github.run_id }}
+          path: .artifacts
+          include-hidden-files: true
+          if-no-files-found: error
