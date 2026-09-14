@@ -28,7 +28,7 @@ func main() {
 
 	vectors, err := readVectors(path, count, dim)
 	if err != nil { panic(err) }
-	idx, err := hnsw.NewHNSW(hnsw.Config{M:16, Mmax:32, Mmax0:64, EfConstruction:efC, MaxLevel:16, DistanceFunc:hnsw.EuclideanDistance})
+	idx, err := hnsw.NewHNSW(hnsw.Config{M:16, Mmax:16, Mmax0:32, EfConstruction:efC, MaxLevel:16, DistanceFunc:hnsw.EuclideanDistance})
 	if err != nil { panic(err) }
 	levelRNG := rand.New(rand.NewPCG(5050, 5050))
 	idx.RandFunc = levelRNG.Float64
