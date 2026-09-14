@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"dmarro89.github.com/hnsw-go/hnsw"
-	"simd/archsimd"
 )
 
 type distanceFn func([]float32, []float32) float32
@@ -38,9 +37,11 @@ func main() {
 	var distance distanceFn
 	switch mode {
 	case "scalar":
-		distance = hnsw.EuclideanDistance
+		distance = distanceScalarReference
 	case "simd256":
-		distance = distanceSIMD256
+		// This binary is built with GOEXPERIMENT=simd on amd64, so the public
+		// production API must dispatch to the SIMD256 fast path.
+		distance = hnsw.EuclideanDistance
 	default:
 		fmt.Fprintf(os.Stderr, "unknown mode %q\n", mode)
 		os.Exit(2)
@@ -124,9 +125,9 @@ func main() {
 		panic(err)
 	}
 
-	engine := "hnsw-go-scalar"
+	engine := "hnsw-go-scalar-reference"
 	if mode == "simd256" {
-		engine = "hnsw-go-simd256"
+		engine = "hnsw-go-production-simd256"
 	}
 	for _, ef := range []int{32, 64, 128} {
 		r := recall(idx, queries, truth, ef)
@@ -150,23 +151,25 @@ func main() {
 	}
 }
 
-func distanceSIMD256(a, b []float32) float32 {
-	var acc archsimd.Float32x8
+func distanceScalarReference(a, b []float32) float32 {
+	var sum0, sum1, sum2, sum3 float32
 	i := 0
-	for ; i <= len(a)-8; i += 8 {
-		av := archsimd.LoadFloat32x8Slice(a[i:])
-		bv := archsimd.LoadFloat32x8Slice(b[i:])
-		d := av.Sub(bv)
-		acc = d.MulAdd(d, acc)
+	for ; i <= len(a)-4; i += 4 {
+		d0 := a[i] - b[i]
+		d1 := a[i+1] - b[i+1]
+		d2 := a[i+2] - b[i+2]
+		d3 := a[i+3] - b[i+3]
+		sum0 += d0 * d0
+		sum1 += d1 * d1
+		sum2 += d2 * d2
+		sum3 += d3 * d3
 	}
-	var lanes [8]float32
-	acc.StoreSlice(lanes[:])
-	sum := lanes[0] + lanes[1] + lanes[2] + lanes[3] + lanes[4] + lanes[5] + lanes[6] + lanes[7]
+	var sum float32
 	for ; i < len(a); i++ {
 		d := a[i] - b[i]
 		sum += d * d
 	}
-	return sum
+	return sum + sum0 + sum1 + sum2 + sum3
 }
 
 func recall(idx *hnsw.HNSW, queries [][]float32, truth [][]uint32, ef int) float64 {
