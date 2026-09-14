@@ -15,7 +15,7 @@ func main() {
  n:=atoi(os.Args[2]); dim:=atoi(os.Args[3]); efc:=atoi(os.Args[4]); threads:=atoi(os.Args[5])
  vectors:=readF32(os.Args[1],dim); if len(vectors)!=n { panic("vector count mismatch") }
  queries:=readF32(os.Args[6],dim); truth:=readU32(os.Args[7],10)
- idx,err:=hnsw.NewHNSW(hnsw.Config{M:16,Mmax:32,Mmax0:64,EfConstruction:efc,MaxLevel:16,DistanceFunc:hnsw.EuclideanDistance}); if err!=nil { panic(err) }
+ idx,err:=hnsw.NewHNSW(hnsw.Config{M:16,Mmax:16,Mmax0:32,EfConstruction:efc,MaxLevel:16,DistanceFunc:hnsw.EuclideanDistance}); if err!=nil { panic(err) }
  idx.RandFunc=rand.New(rand.NewPCG(5050,5050)).Float64
  if threads==1 { idx.InsertBatch(vectors) } else if err=idx.BuildParallel(vectors,hnsw.BulkBuildConfig{Workers:threads,BatchSize:max(64,threads*16),EfConstruction:efc}); err!=nil { panic(err) }
  for _,ef:=range []int{32,64,128} { fmt.Printf("%d,%.4f\n",ef,recall(idx,queries,truth,ef)) }
