@@ -1,13 +1,17 @@
 package hnsw
 
-// vectorArena stores a fixed-dimension copy of vectors for direct ID-based
-// addressing on the serial bulk-build hot path. Node.Vector remains unchanged
-// in this experiment so public behavior and parallel construction can keep the
-// existing representation while we measure the locality effect end to end.
+import "sync"
+
+// This is deliberately experimental storage: keeping it outside HNSW avoids
+// committing the public/internal layout to the prototype before the 100k build
+// gate proves the end-to-end benefit. Access is under the index lock on build
+// paths and sync.Map keeps concurrent read-only SearchInto safe.
 type vectorArena struct {
 	data []float32
 	dim  int
 }
+
+var vectorArenas sync.Map // map[*HNSW]vectorArena
 
 func (h *HNSW) prepareVectorArena(vectors [][]float32) bool {
 	if len(vectors) == 0 || len(vectors[0]) == 0 {
@@ -32,20 +36,21 @@ func (h *HNSW) prepareVectorArena(vectors [][]float32) bool {
 	for i, vector := range vectors {
 		copy(data[(base+i)*dim:(base+i+1)*dim], vector)
 	}
-	h.vectors = vectorArena{data: data, dim: dim}
+	vectorArenas.Store(h, vectorArena{data: data, dim: dim})
 	return true
 }
 
 func (h *HNSW) disableVectorArena() {
-	h.vectors = vectorArena{}
+	vectorArenas.Delete(h)
 }
 
 func (h *HNSW) vectorByID(id int) []float32 {
-	if h.vectors.dim > 0 {
-		start := id * h.vectors.dim
-		end := start + h.vectors.dim
-		if start >= 0 && end <= len(h.vectors.data) {
-			return h.vectors.data[start:end]
+	if value, ok := vectorArenas.Load(h); ok {
+		arena := value.(vectorArena)
+		start := id * arena.dim
+		end := start + arena.dim
+		if start >= 0 && end <= len(arena.data) {
+			return arena.data[start:end]
 		}
 	}
 	return h.Nodes[id].Vector
