@@ -76,6 +76,10 @@ func main() {
 	}
 	idx.RandFunc = rand.New(rand.NewPCG(5050, 5050)).Float64
 
+	runtime.GC()
+	var before runtime.MemStats
+	runtime.ReadMemStats(&before)
+
 	var profileFile *os.File
 	if profilePath := os.Getenv("HNSW_CPU_PROFILE"); profilePath != "" {
 		profileFile, err = os.Create(profilePath)
@@ -88,15 +92,10 @@ func main() {
 		}
 	}
 
-	runtime.GC()
-	var before runtime.MemStats
-	runtime.ReadMemStats(&before)
 	start := time.Now()
 	idx.InsertBatch(vectors)
 	build := time.Since(start)
 	buildDistanceCalls := distanceCalls
-	var after runtime.MemStats
-	runtime.ReadMemStats(&after)
 
 	if profileFile != nil {
 		pprof.StopCPUProfile()
@@ -104,6 +103,9 @@ func main() {
 			panic(err)
 		}
 	}
+
+	var after runtime.MemStats
+	runtime.ReadMemStats(&after)
 
 	f, err := os.Create(out)
 	if err != nil {
