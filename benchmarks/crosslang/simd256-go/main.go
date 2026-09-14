@@ -10,6 +10,7 @@ import (
 	"math/rand/v2"
 	"os"
 	"runtime"
+	"runtime/pprof"
 	"strconv"
 	"time"
 
@@ -45,6 +46,15 @@ func main() {
 		os.Exit(2)
 	}
 
+	var distanceCalls uint64
+	if os.Getenv("HNSW_DISTANCE_COUNT") == "1" {
+		baseDistance := distance
+		distance = func(a, b []float32) float32 {
+			distanceCalls++
+			return baseDistance(a, b)
+		}
+	}
+
 	vectors := readF32(vectorsPath, dim)
 	if len(vectors) != count {
 		panic(fmt.Sprintf("vector count mismatch: got %d want %d", len(vectors), count))
@@ -66,14 +76,34 @@ func main() {
 	}
 	idx.RandFunc = rand.New(rand.NewPCG(5050, 5050)).Float64
 
+	var profileFile *os.File
+	if profilePath := os.Getenv("HNSW_CPU_PROFILE"); profilePath != "" {
+		profileFile, err = os.Create(profilePath)
+		if err != nil {
+			panic(err)
+		}
+		if err = pprof.StartCPUProfile(profileFile); err != nil {
+			_ = profileFile.Close()
+			panic(err)
+		}
+	}
+
 	runtime.GC()
 	var before runtime.MemStats
 	runtime.ReadMemStats(&before)
 	start := time.Now()
 	idx.InsertBatch(vectors)
 	build := time.Since(start)
+	buildDistanceCalls := distanceCalls
 	var after runtime.MemStats
 	runtime.ReadMemStats(&after)
+
+	if profileFile != nil {
+		pprof.StopCPUProfile()
+		if err := profileFile.Close(); err != nil {
+			panic(err)
+		}
+	}
 
 	f, err := os.Create(out)
 	if err != nil {
@@ -86,7 +116,7 @@ func main() {
 	fields := []string{
 		"engine", "mode", "vectors", "dimensions", "efConstruction",
 		"seconds", "vectors_per_second", "total_alloc_mib", "live_heap_delta_mib",
-		"efSearch", "recall_at_10",
+		"distance_calls", "efSearch", "recall_at_10",
 	}
 	if err := w.Write(fields); err != nil {
 		panic(err)
@@ -108,6 +138,7 @@ func main() {
 			fmt.Sprintf("%.0f", float64(count)/build.Seconds()),
 			fmt.Sprintf("%.2f", mib(after.TotalAlloc-before.TotalAlloc)),
 			fmt.Sprintf("%.2f", mib(sub(after.HeapAlloc, before.HeapAlloc))),
+			strconv.FormatUint(buildDistanceCalls, 10),
 			strconv.Itoa(ef),
 			fmt.Sprintf("%.4f", r),
 		}
