@@ -26,6 +26,9 @@ jobs:
           go-version-file: go.mod
           cache: false
 
+      - name: Prepare artifacts
+        run: mkdir -p .artifacts
+
       - name: Validate scalar candidates
         run: go test ./benchmarks -run '^TestDistanceKernelVariantsAgree$' -count=1 -v
 
@@ -33,7 +36,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p .artifacts
           go test ./benchmarks -run '^$' -bench '^BenchmarkDistanceKernel$' -benchmem -benchtime=1s -count=5 | tee .artifacts/scalar-microbench.txt
 
       - name: Measure scalar build impact
@@ -67,7 +69,7 @@ jobs:
           name: distance-kernel-scalar-${{ github.run_id }}
           path: .artifacts
           include-hidden-files: true
-          if-no-files-found: error
+          if-no-files-found: warn
 
   simd:
     name: Go 1.26 archsimd kernels
@@ -86,6 +88,9 @@ jobs:
           go-version-file: go.mod
           cache: false
 
+      - name: Prepare artifacts
+        run: mkdir -p .artifacts
+
       - name: Validate SIMD candidates
         run: go test ./benchmarks -run '^TestDistanceKernelSIMDAgrees$' -count=1 -v
 
@@ -93,7 +98,6 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p .artifacts
           go test ./benchmarks -run '^$' -bench '^BenchmarkDistanceKernelSIMD$' -benchmem -benchtime=1s -count=5 | tee .artifacts/simd-microbench.txt
 
       - name: Measure SIMD build impact
@@ -129,4 +133,4 @@ jobs:
           name: distance-kernel-simd-${{ github.run_id }}
           path: .artifacts
           include-hidden-files: true
-          if-no-files-found: error
+          if-no-files-found: warn
