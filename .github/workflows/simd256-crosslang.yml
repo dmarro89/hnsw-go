@@ -1,4 +1,4 @@
-name: SIMD256 cross-language experiment
+name: SIMD256 production validation
 
 on:
   pull_request:
@@ -16,7 +16,7 @@ on:
 
 jobs:
   simd256:
-    name: Scalar vs SIMD256 build and recall
+    name: Scalar fallback vs production SIMD256
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
@@ -42,10 +42,13 @@ jobs:
       - name: Install benchmark dependencies
         run: python -m pip install --disable-pip-version-check -r benchmarks/crosslang/requirements.txt
 
-      - name: Validate SIMD256 distance kernel
+      - name: Validate production SIMD dispatch
+        run: go test ./hnsw -run '^TestEuclideanDistance' -count=1 -v
+
+      - name: Validate SIMD256 benchmark references
         run: go test ./benchmarks -run '^TestDistanceKernelSIMDAgrees$' -count=1 -v
 
-      - name: Build SIMD256 experiment runner
+      - name: Build SIMD256 validation runner
         shell: bash
         run: |
           set -euo pipefail
@@ -58,7 +61,7 @@ jobs:
           set -euo pipefail
           go test ./benchmarks -run '^$' -bench '^BenchmarkDistanceKernelSIMDRandomAccess$' -benchmem -benchtime=2s -count=5 | tee .artifacts/simd256-random-access.txt
 
-      - name: Run scalar vs SIMD256 matrix and diagnostics
+      - name: Run scalar vs production SIMD256 matrix and diagnostics
         shell: bash
         run: |
           set -euo pipefail
@@ -89,9 +92,9 @@ jobs:
         shell: bash
         run: |
           {
-            echo "# SIMD256 HNSW diagnostic experiment"
+            echo "# SIMD256 production validation"
             echo
-            echo "> Experimental only: Go 1.26 GOEXPERIMENT=simd on amd64. The production distance kernel is unchanged."
+            echo "> Go 1.26 GOEXPERIMENT=simd on amd64. The public hnsw.EuclideanDistance API uses the production SIMD256 fast path; the comparison baseline is an independent scalar reference."
             echo
             if [[ -f .artifacts/simd256-crosslang.md ]]; then cat .artifacts/simd256-crosslang.md; else echo "The SIMD256 matrix did not complete."; fi
             echo
@@ -107,7 +110,7 @@ jobs:
             cat .artifacts/scalar-100k-ef64.pprof-top.txt 2>/dev/null || true
             echo '```'
             echo
-            echo "## SIMD256 CPU profile: top"
+            echo "## Production SIMD256 CPU profile: top"
             echo '```text'
             cat .artifacts/simd256-100k-ef64.pprof-top.txt 2>/dev/null || true
             echo '```'
@@ -119,7 +122,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: simd256-crosslang-${{ github.run_id }}
+          name: simd256-production-${{ github.run_id }}
           path: .artifacts
           include-hidden-files: true
           if-no-files-found: error
