@@ -5,7 +5,10 @@ on:
     branches: ["main"]
     paths:
       - "benchmarks/crosslang/**"
+      - "benchmarks/distance_kernel_test.go"
+      - "benchmarks/distance_kernel_simd_test.go"
       - ".github/workflows/cross-language.yml"
+      - ".github/workflows/distance-kernel.yml"
       - "hnsw/**"
       - "structs/**"
   workflow_dispatch:
