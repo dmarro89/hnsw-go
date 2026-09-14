@@ -12,6 +12,27 @@ import (
 	"simd/archsimd"
 )
 
+func distanceScalarReferenceSIMD(a, b []float32) float32 {
+	var sum0, sum1, sum2, sum3 float32
+	i := 0
+	for ; i <= len(a)-4; i += 4 {
+		d0 := a[i] - b[i]
+		d1 := a[i+1] - b[i+1]
+		d2 := a[i+2] - b[i+2]
+		d3 := a[i+3] - b[i+3]
+		sum0 += d0 * d0
+		sum1 += d1 * d1
+		sum2 += d2 * d2
+		sum3 += d3 * d3
+	}
+	var sum float32
+	for ; i < len(a); i++ {
+		d := a[i] - b[i]
+		sum += d * d
+	}
+	return sum + sum0 + sum1 + sum2 + sum3
+}
+
 func distanceSIMD128(a, b []float32) float32 {
 	var acc archsimd.Float32x4
 	i := 0
@@ -53,11 +74,12 @@ func distanceSIMD256(a, b []float32) float32 {
 func TestDistanceKernelSIMDAgrees(t *testing.T) {
 	for _, dim := range []int{1, 3, 4, 7, 8, 15, 16, 17, 32, 128, 384, 768, 1536} {
 		a, b := deterministicDistanceVectors(dim, uint64(dim+7070))
-		want := hnsw.EuclideanDistance(a, b)
+		want := distanceScalarReferenceSIMD(a, b)
 		for _, tc := range []struct {
 			name string
 			fn   distanceKernelFn
 		}{
+			{"production_simd256", hnsw.EuclideanDistance},
 			{"simd128_fma", distanceSIMD128},
 			{"simd256_fma", distanceSIMD256},
 		} {
@@ -76,7 +98,8 @@ func BenchmarkDistanceKernelSIMD(b *testing.B) {
 		name string
 		fn   distanceKernelFn
 	}{
-		{"production_scalar4", hnsw.EuclideanDistance},
+		{"scalar_reference", distanceScalarReferenceSIMD},
+		{"production_simd256", hnsw.EuclideanDistance},
 		{"simd128_fma", distanceSIMD128},
 		{"simd256_fma", distanceSIMD256},
 	}
@@ -120,8 +143,8 @@ func BenchmarkDistanceKernelSIMDRandomAccess(b *testing.B) {
 		name string
 		fn   distanceKernelFn
 	}{
-		{"production_scalar4", hnsw.EuclideanDistance},
-		{"simd256_fma", distanceSIMD256},
+		{"scalar_reference", distanceScalarReferenceSIMD},
+		{"production_simd256", hnsw.EuclideanDistance},
 	}
 	for _, kernel := range kernels {
 		b.Run(kernel.name, func(b *testing.B) {
@@ -139,7 +162,6 @@ func BenchmarkDistanceKernelSIMDRandomAccess(b *testing.B) {
 }
 
 func BenchmarkDistanceKernelSIMDBuildImpact(b *testing.B) {
-	benchmarkBuildWithDistance(b, "production_scalar4", hnsw.EuclideanDistance)
-	benchmarkBuildWithDistance(b, "simd128_fma", distanceSIMD128)
-	benchmarkBuildWithDistance(b, "simd256_fma", distanceSIMD256)
+	benchmarkBuildWithDistance(b, "scalar_reference", distanceScalarReferenceSIMD)
+	benchmarkBuildWithDistance(b, "production_simd256", hnsw.EuclideanDistance)
 }
