@@ -40,6 +40,9 @@ jobs:
       - name: Install benchmark dependencies
         run: python -m pip install --disable-pip-version-check -r benchmarks/crosslang/requirements.txt
 
+      - name: Validate SIMD256 distance kernel
+        run: go test ./benchmarks -run '^TestDistanceKernelSIMDAgrees$' -count=1 -v
+
       - name: Build SIMD256 experiment runner
         shell: bash
         run: |
