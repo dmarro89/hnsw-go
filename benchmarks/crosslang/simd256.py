@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import csv
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -13,10 +14,13 @@ COUNTS = (10_000, 100_000)
 EFC_VALUES = (64, 200)
 EFS = (32, 64, 128)
 MAX_RECALL_REGRESSION = 0.005
+DIAGNOSTIC_N = 100_000
+DIAGNOSTIC_EFC = 64
 
 ROOT = Path(__file__).resolve().parents[2]
 DATA = ROOT / ".artifacts" / "crosslang-data"
 OUT = ROOT / ".artifacts" / "simd256-crosslang.csv"
+DIAG_OUT = ROOT / ".artifacts" / "simd256-diagnostics.csv"
 RUNNER = ROOT / ".artifacts" / "simd256-go"
 
 
@@ -50,8 +54,11 @@ def quality_data(n, x):
     return query_path, truth_path
 
 
-def run(mode, vectors, n, efc, queries, truth):
-    output = DATA / f"simd256-{mode}-{n}-{efc}.csv"
+def run(mode, vectors, n, efc, queries, truth, suffix="matrix", extra_env=None):
+    output = DATA / f"simd256-{suffix}-{mode}-{n}-{efc}.csv"
+    env = os.environ.copy()
+    if extra_env:
+        env.update(extra_env)
     subprocess.run(
         [
             str(RUNNER),
@@ -65,10 +72,78 @@ def run(mode, vectors, n, efc, queries, truth):
             str(output),
         ],
         cwd=ROOT,
+        env=env,
         check=True,
     )
     with output.open() as f:
         return list(csv.DictReader(f))
+
+
+def write_matrix(rows):
+    OUT.parent.mkdir(parents=True, exist_ok=True)
+    fields = list(rows[0])
+    with OUT.open("w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=fields)
+        writer.writeheader()
+        writer.writerows(rows)
+
+
+def run_diagnostics():
+    vectors, x = dataset(DIAGNOSTIC_N)
+    queries, truth = quality_data(DIAGNOSTIC_N, x)
+
+    counted = {}
+    for mode in ("scalar", "simd256"):
+        result = run(
+            mode,
+            vectors,
+            DIAGNOSTIC_N,
+            DIAGNOSTIC_EFC,
+            queries,
+            truth,
+            suffix="count",
+            extra_env={"HNSW_DISTANCE_COUNT": "1"},
+        )
+        counted[mode] = int(result[0]["distance_calls"])
+
+    profile_paths = {}
+    for mode in ("scalar", "simd256"):
+        profile_path = ROOT / ".artifacts" / f"{mode}-100k-ef64.cpu.pprof"
+        run(
+            mode,
+            vectors,
+            DIAGNOSTIC_N,
+            DIAGNOSTIC_EFC,
+            queries,
+            truth,
+            suffix="profile",
+            extra_env={"HNSW_CPU_PROFILE": str(profile_path)},
+        )
+        profile_paths[mode] = profile_path
+
+    scalar_calls = counted["scalar"]
+    simd_calls = counted["simd256"]
+    delta = simd_calls - scalar_calls
+    ratio = simd_calls / scalar_calls if scalar_calls else float("nan")
+
+    diag_rows = [
+        {
+            "mode": mode,
+            "vectors": DIAGNOSTIC_N,
+            "dimensions": DIM,
+            "efConstruction": DIAGNOSTIC_EFC,
+            "distance_calls": counted[mode],
+            "distance_calls_per_vector": f"{counted[mode] / DIAGNOSTIC_N:.3f}",
+            "profile": str(profile_paths[mode].relative_to(ROOT)),
+        }
+        for mode in ("scalar", "simd256")
+    ]
+    with DIAG_OUT.open("w", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=list(diag_rows[0]))
+        writer.writeheader()
+        writer.writerows(diag_rows)
+
+    return scalar_calls, simd_calls, delta, ratio
 
 
 def main():
@@ -120,12 +195,8 @@ def main():
                         f"is below {-MAX_RECALL_REGRESSION:.4f}"
                     )
 
-    OUT.parent.mkdir(parents=True, exist_ok=True)
-    fields = list(rows[0])
-    with OUT.open("w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=fields)
-        writer.writeheader()
-        writer.writerows(rows)
+    write_matrix(rows)
+    scalar_calls, simd_calls, call_delta, call_ratio = run_diagnostics()
 
     print("## SIMD256 serial build impact")
     print()
@@ -143,6 +214,21 @@ def main():
             f"{float(row['build_speedup']):.2f}x | {row['scalar_vectors_per_second']} | "
             f"{row['simd256_vectors_per_second']} |"
         )
+
+    print()
+    print("## DistanceFunc call-count diagnostic")
+    print()
+    print("| Scenario | Scalar calls | SIMD256 calls | Delta | SIMD/scalar |")
+    print("| :--- | ---: | ---: | ---: | ---: |")
+    print(
+        f"| {DIAGNOSTIC_N} x {DIM}d, efC={DIAGNOSTIC_EFC} | {scalar_calls} | "
+        f"{simd_calls} | {call_delta:+d} | {call_ratio:.4f}x |"
+    )
+    print()
+    print(
+        "> Counts come from separate instrumented builds; the main timing matrix is uninstrumented. "
+        "CPU profiles are separate uninstrumented 100k/efC64 builds."
+    )
 
     print()
     print("## Common-ground-truth Recall@10: scalar vs SIMD256")
