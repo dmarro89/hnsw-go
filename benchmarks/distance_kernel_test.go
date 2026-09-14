@@ -156,6 +156,20 @@ func deterministicDistanceVectors(dim int, seed uint64) ([]float32, []float32) {
 	return a, b
 }
 
+func deterministicBuildVectors(count, dim int, seed uint64) [][]float32 {
+	rng := rand.New(rand.NewPCG(seed, seed^0x9e3779b97f4a7c15))
+	vectors := make([][]float32, count)
+	storage := make([]float32, count*dim)
+	for i := 0; i < count; i++ {
+		vector := storage[i*dim : (i+1)*dim]
+		for j := range vector {
+			vector[j] = rng.Float32()
+		}
+		vectors[i] = vector
+	}
+	return vectors
+}
+
 func TestDistanceKernelVariantsAgree(t *testing.T) {
 	kernels := []struct {
 		name string
@@ -216,7 +230,7 @@ func benchmarkBuildWithDistance(b *testing.B, name string, distance distanceKern
 		count = 20000
 		dim   = 128
 	)
-	vectors := benchmarkVectors(count, dim, 6060)
+	vectors := deterministicBuildVectors(count, dim, 6060)
 	b.Run(name, func(b *testing.B) {
 		b.ReportAllocs()
 		for i := 0; i < b.N; i++ {
