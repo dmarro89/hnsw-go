@@ -1,0 +1,73 @@
+name: Vector data locality experiment
+
+on:
+  pull_request:
+    branches: ["main"]
+    paths:
+      - "benchmarks/vector_locality_test.go"
+      - ".github/workflows/vector-locality.yml"
+      - "hnsw/**"
+      - "structs/**"
+      - "go.mod"
+  workflow_dispatch:
+
+jobs:
+  locality:
+    name: Random-access vector locality
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      GOMAXPROCS: 1
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Prepare artifacts
+        run: mkdir -p .artifacts
+
+      - name: Run random-access locality benchmark
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test ./benchmarks -run '^$' -bench '^BenchmarkVectorDataLocality$' -benchmem -benchtime=2s -count=7 | tee .artifacts/vector-locality.txt
+
+      - name: Run lookup-only benchmark
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test ./benchmarks -run '^$' -bench '^BenchmarkVectorLookupOnly$' -benchmem -benchtime=2s -count=7 | tee .artifacts/vector-lookup.txt
+
+      - name: Publish locality comparison
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "# Vector data locality experiment"
+            echo
+            echo "> Production HNSW is unchanged. Both layouts use identical vectors, query, random ID sequence, and scalar EuclideanDistance."
+            echo
+            echo "## Random-access distance path"
+            echo '```text'
+            cat .artifacts/vector-locality.txt 2>/dev/null || true
+            echo '```'
+            echo
+            echo "## Lookup-only path"
+            echo '```text'
+            cat .artifacts/vector-lookup.txt 2>/dev/null || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload locality results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: vector-locality-${{ github.run_id }}
+          path: .artifacts
+          include-hidden-files: true
+          if-no-files-found: error
