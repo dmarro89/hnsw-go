@@ -5,6 +5,7 @@ package benchmarks
 import (
 	"fmt"
 	"math"
+	"math/rand/v2"
 	"testing"
 
 	"dmarro89.github.com/hnsw-go/hnsw"
@@ -93,6 +94,47 @@ func BenchmarkDistanceKernelSIMD(b *testing.B) {
 				distanceKernelSink = result
 			})
 		}
+	}
+}
+
+//go:noinline
+func invokeDistanceIndirect(fn distanceKernelFn, a, b []float32) float32 {
+	return fn(a, b)
+}
+
+func BenchmarkDistanceKernelSIMDRandomAccess(b *testing.B) {
+	const (
+		count     = 100_000
+		dim       = 128
+		indexRing = 1 << 16
+	)
+	vectors := deterministicBuildVectors(count, dim, 9090)
+	query, _ := deterministicDistanceVectors(dim, 9191)
+	indices := make([]int, indexRing)
+	rng := rand.New(rand.NewPCG(9292, 9393))
+	for i := range indices {
+		indices[i] = rng.IntN(count)
+	}
+
+	kernels := []struct {
+		name string
+		fn   distanceKernelFn
+	}{
+		{"production_scalar4", hnsw.EuclideanDistance},
+		{"simd256_fma", distanceSIMD256},
+	}
+	for _, kernel := range kernels {
+		b.Run(kernel.name, func(b *testing.B) {
+			b.ReportAllocs()
+			b.SetBytes(dim * 2 * 4)
+			var sum float32
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				candidate := vectors[indices[i&(indexRing-1)]]
+				sum += invokeDistanceIndirect(kernel.fn, query, candidate)
+			}
+			distanceKernelSink = sum
+		})
 	}
 }
 
