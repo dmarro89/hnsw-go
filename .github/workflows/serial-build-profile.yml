@@ -1,0 +1,107 @@
+name: Serial HNSW build profile
+
+on:
+  pull_request:
+    branches: ["main"]
+    paths:
+      - "benchmarks/profile_insert_test.go"
+      - "benchmarks/profile_serial_build_helpers_test.go"
+      - ".github/workflows/serial-build-profile.yml"
+  workflow_dispatch:
+
+jobs:
+  profile:
+    name: 100k x 128d efC=${{ matrix.efConstruction }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        efConstruction: [64, 200]
+    env:
+      GOMAXPROCS: 4
+      HNSW_PROFILE_BUILD: "1"
+      HNSW_PROFILE_VECTORS: "100000"
+      HNSW_PROFILE_DIM: "128"
+      HNSW_PROFILE_EF_CONSTRUCTION: ${{ matrix.efConstruction }}
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Build benchmark test binary
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .artifacts
+          go test -c ./benchmarks -o .artifacts/benchmarks.test
+
+      - name: Capture compiler escape diagnostics
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test -run '^$' -gcflags='-m=2' ./hnsw > .artifacts/escape-analysis.txt 2>&1 || true
+
+      - name: Run serial build profile
+        shell: bash
+        run: |
+          set -euo pipefail
+          prefix="$PWD/.artifacts/serial-100k-128d-efc${HNSW_PROFILE_EF_CONSTRUCTION}"
+          export HNSW_PROFILE_PREFIX="$prefix"
+          ./.artifacts/benchmarks.test -test.run '^TestHNSWInsertProfiling$' -test.v | tee .artifacts/profile-result.txt
+
+      - name: Render pprof summaries
+        shell: bash
+        run: |
+          set -euo pipefail
+          prefix="$PWD/.artifacts/serial-100k-128d-efc${HNSW_PROFILE_EF_CONSTRUCTION}"
+          bin="$PWD/.artifacts/benchmarks.test"
+
+          go tool pprof -top -nodecount=40 "$bin" "${prefix}-cpu.pprof" > .artifacts/cpu-top.txt
+          go tool pprof -top -cum -nodecount=40 "$bin" "${prefix}-cpu.pprof" > .artifacts/cpu-top-cumulative.txt
+          go tool pprof -top -alloc_space -nodecount=40 "$bin" "${prefix}-heap.pprof" > .artifacts/heap-alloc-space.txt
+          go tool pprof -top -alloc_objects -nodecount=40 "$bin" "${prefix}-heap.pprof" > .artifacts/heap-alloc-objects.txt
+          go tool pprof -top -inuse_space -nodecount=40 "$bin" "${prefix}-heap.pprof" > .artifacts/heap-inuse-space.txt
+
+          go tool pprof -list='searchLayerWithEntriesBufferContext' "$bin" "${prefix}-cpu.pprof" > .artifacts/cpu-search-layer.txt || true
+          go tool pprof -list='selectClosestNeighborIDs' "$bin" "${prefix}-cpu.pprof" > .artifacts/cpu-neighbor-pruning.txt || true
+          go tool pprof -list='EuclideanDistance' "$bin" "${prefix}-cpu.pprof" > .artifacts/cpu-distance.txt || true
+
+      - name: Publish profile summary
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "## Serial build profile — efConstruction=${HNSW_PROFILE_EF_CONSTRUCTION}"
+            echo
+            echo "Configuration: 100k vectors, 128d float32, M=16, Mmax=16, Mmax0=32, GOMAXPROCS=4."
+            echo
+            echo "### Build result"
+            echo '```text'
+            cat .artifacts/profile-result.txt 2>/dev/null || true
+            echo '```'
+            echo
+            echo "### CPU top"
+            echo '```text'
+            sed -n '1,45p' .artifacts/cpu-top.txt 2>/dev/null || true
+            echo '```'
+            echo
+            echo "### Allocation-space top"
+            echo '```text'
+            sed -n '1,45p' .artifacts/heap-alloc-space.txt 2>/dev/null || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload profiling artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: serial-build-profile-efc${{ matrix.efConstruction }}-${{ github.run_id }}
+          path: .artifacts
+          include-hidden-files: true
+          if-no-files-found: error
