@@ -30,10 +30,19 @@ func (h *HNSW) Insert(vector []float32, id int) {
 }
 
 // InsertBatch appends a batch of vectors using contiguous IDs starting from the
-// current node count. It is optimized for single-threaded bulk construction.
+// current node count. Empty indexes with a fixed-dimension batch use a
+// contiguous float32 arena for construction locality; incremental batches retain
+// the established scalar path to preserve compatibility.
 func (h *HNSW) InsertBatch(vectors [][]float32) {
 	h.mutex.Lock()
 	defer h.mutex.Unlock()
+
+	if len(h.Nodes) == 0 {
+		if dim, ok := uniformVectorDimension(vectors); ok {
+			h.insertBatchArenaLocked(vectors, dim)
+			return
+		}
+	}
 
 	nextID := len(h.Nodes)
 	h.ensureNodeCapacity(nextID + len(vectors))
@@ -56,57 +65,40 @@ func (h *HNSW) insertLocked(vector []float32, id int, searchResultsBuf []int) []
 		panic("node id must be contiguous and match insertion order")
 	}
 
-	// l ← ⌊-ln(unif(0..1))∙mL⌋ // new element’s level
-	// Generate the level for the new node based on a random distribution.
 	level := h.RandomLevel()
 
 	newNode := h.appendNode(id, vector, level)
-	// Generate the level for the new node based on a random distribution.
 	if h.EntryPoint == nil {
 		h.EntryPoint = newNode
 		return searchResultsBuf
 	}
 
-	// ep ← get entry point for hnsw
 	ep := h.EntryPoint
 	entryPoints := []int{ep.ID}
-	// L ← level of ep - top layer for hnsw
 	L := ep.Level
 
-	// Phase 1: Descend through layers to find entry point for insertion
-	// This phase finds good starting points for the lower layer insertions
-	// for lc ← L … l+1
 	for lc := L; lc > level; lc-- {
-		// W ← SEARCH-LAYER(q, ep, ef=1, lc)
 		newEp := h.greedySearchLayer(vector, ep, lc)
 		if newEp == nil {
 			break
 		}
 
-		// Update entry point for next iteration
 		ep = newEp
 		entryPoints = []int{ep.ID}
 	}
 
-	// Phase 2: Connecting the new node at each layer from the minimum of (L, l) to the base layer (0).
-	// for lc ← min(L, l) … 0
 	maxLayer := int(math.Min(float64(L), float64(level)))
 	for lc := maxLayer; lc >= 0; lc-- {
-		// W ← list for the currently found nearest elements
-		// W ← SEARCH-LAYER(q, ep, efConstruction, lc)
 		nearestNeighbors := h.searchLayerWithEntriesBuffer(vector, entryPoints, h.EfConstruction, lc, searchResultsBuf)
 
-		// Ensure that the number of connections does not exceed the allowed limit.
 		maxConn := h.Mmax
 		if lc == 0 {
 			maxConn = h.Mmax0
 		}
 
-		// neighbors ← SELECT-NEIGHBORS(q, W, M, lc)
 		neighbors := nearestNeighbors[:min(len(nearestNeighbors), h.M)]
 		h.updateBidirectionalConnections(newNode, neighbors, lc, maxConn)
 
-		// ep ← W
 		if len(nearestNeighbors) > 0 {
 			ep = h.Nodes[nearestNeighbors[0]]
 			entryPoints = nearestNeighbors
@@ -114,42 +106,27 @@ func (h *HNSW) insertLocked(vector []float32, id int, searchResultsBuf []int) []
 		}
 	}
 
-	// If the new node's level is higher than the current top level, update the entry point.
-	// if l > L
 	if level > L {
 		h.EntryPoint = newNode
 	}
 	return searchResultsBuf
 }
 
-// updateBidirectionalConnections establishes and maintains bidirectional connections
-// between a node and its neighbors at a specific level.
-//
-// The method ensures that:
-// 1. The node is connected to its neighbors
-// 2. The neighbors are connected back to the node
-// 3. No node exceeds its maximum allowed connections
-// 4. Connections are optimized to maintain the best possible neighbors
 func (h *HNSW) updateBidirectionalConnections(q *structs.Node, neighbors []int, level int, maxConn int) {
-	// add bidirectional connections from neighbors to q at layer lc
-	q.Neighbors[level] = q.Neighbors[level][:0]                   // Reset and reuse the slice
-	q.Neighbors[level] = append(q.Neighbors[level], neighbors...) // Append neighbors
+	q.Neighbors[level] = q.Neighbors[level][:0]
+	q.Neighbors[level] = append(q.Neighbors[level], neighbors...)
 
-	// for each e ∈ neighbors
 	for _, neighborID := range neighbors {
 		neighbor := h.Nodes[neighborID]
 		if level >= len(neighbor.Neighbors) {
 			continue
 		}
 
-		// Check if we need to optimize connections
 		if len(neighbor.Neighbors[level])+1 <= maxConn {
 			currentLen := len(neighbor.Neighbors[level])
 			if currentLen < cap(neighbor.Neighbors[level]) {
-				// There is enough capacity, so we can reuse the slice
 				neighbor.Neighbors[level] = append(neighbor.Neighbors[level], q.ID)
 			} else {
-				// We need to allocate a new slice with incremented capacity
 				newNeighbors := make([]int, currentLen+1, currentLen+2)
 				copy(newNeighbors, neighbor.Neighbors[level])
 				newNeighbors[currentLen] = q.ID
@@ -158,11 +135,8 @@ func (h *HNSW) updateBidirectionalConnections(q *structs.Node, neighbors []int, 
 			continue
 		}
 
-		// Optimize the neighbor's neighborhood by keeping the closest maxConn elements
-		// among the existing neighbors plus the new node.
 		candidates := h.selectClosestNeighborIDs(neighbor, neighbor.Neighbors[level], q.ID, maxConn)
 
-		// eNewConn ← SELECT-NEIGHBORS(e, eConn, Mmax, lc)
 		neighbor.Neighbors[level] = neighbor.Neighbors[level][:len(candidates)]
 		copy(neighbor.Neighbors[level], candidates)
 	}
