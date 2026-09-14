@@ -1,0 +1,56 @@
+name: Vector arena build experiment
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'hnsw/vector_arena.go'
+      - 'benchmarks/vector_arena_build_test.go'
+      - '.github/workflows/vector-arena-build.yml'
+  workflow_dispatch:
+
+jobs:
+  arena-build:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      GOMAXPROCS: 1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Prepare artifacts
+        run: mkdir -p .artifacts
+      - name: Run Go tests
+        run: go test ./...
+      - name: Run 20k smoke comparison
+        run: go test ./benchmarks -run '^$' -bench '^BenchmarkVectorArenaBuild20k$' -benchmem -benchtime=1x -count=2 | tee .artifacts/arena-20k.txt
+      - name: Run 100k construction comparison
+        run: go test ./benchmarks -run '^$' -bench '^BenchmarkVectorArenaBuild100k$' -benchmem -benchtime=1x -count=3 | tee .artifacts/arena-100k.txt
+      - name: Publish results
+        if: always()
+        run: |
+          {
+            echo '# Vector arena end-to-end build experiment'
+            echo
+            echo '> Experimental serial path only; production InsertBatch is unchanged.'
+            echo
+            echo '## 20k smoke'
+            echo '```text'
+            cat .artifacts/arena-20k.txt 2>/dev/null || true
+            echo '```'
+            echo
+            echo '## 100k build'
+            echo '```text'
+            cat .artifacts/arena-100k.txt 2>/dev/null || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: vector-arena-build-${{ github.run_id }}
+          path: .artifacts
+          include-hidden-files: true
+          if-no-files-found: error
