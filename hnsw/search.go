@@ -1,7 +1,6 @@
 package hnsw
 
 import (
-	"math"
 	"reflect"
 
 	"dmarro89.github.com/hnsw-go/structs"
