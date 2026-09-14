@@ -6,6 +6,7 @@ on:
     paths:
       - "benchmarks/crosslang/simd256.py"
       - "benchmarks/crosslang/simd256-go/**"
+      - "benchmarks/distance_kernel_simd_test.go"
       - ".github/workflows/simd256-crosslang.yml"
       - "hnsw/**"
       - "structs/**"
@@ -50,28 +51,54 @@ jobs:
           mkdir -p .artifacts
           go build -o .artifacts/simd256-go ./benchmarks/crosslang/simd256-go
 
-      - name: Run scalar vs SIMD256 matrix
+      - name: Benchmark random-access function path
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test ./benchmarks -run '^$' -bench '^BenchmarkDistanceKernelSIMDRandomAccess$' -benchmem -benchtime=2s -count=5 | tee .artifacts/simd256-random-access.txt
+
+      - name: Run scalar vs SIMD256 matrix and diagnostics
         shell: bash
         run: |
           set -euo pipefail
           python benchmarks/crosslang/simd256.py | tee .artifacts/simd256-crosslang.md
+
+      - name: Summarize CPU profiles
+        shell: bash
+        run: |
+          set -euo pipefail
+          go tool pprof -top -nodecount=30 .artifacts/simd256-go .artifacts/scalar-100k-ef64.cpu.pprof > .artifacts/scalar-100k-ef64.pprof-top.txt
+          go tool pprof -top -cum -nodecount=30 .artifacts/simd256-go .artifacts/scalar-100k-ef64.cpu.pprof > .artifacts/scalar-100k-ef64.pprof-cum.txt
+          go tool pprof -top -nodecount=30 .artifacts/simd256-go .artifacts/simd256-100k-ef64.cpu.pprof > .artifacts/simd256-100k-ef64.pprof-top.txt
+          go tool pprof -top -cum -nodecount=30 .artifacts/simd256-go .artifacts/simd256-100k-ef64.cpu.pprof > .artifacts/simd256-100k-ef64.pprof-cum.txt
 
       - name: Publish SIMD256 comparison
         if: always()
         shell: bash
         run: |
           {
-            echo "# SIMD256 cross-language experiment"
+            echo "# SIMD256 HNSW diagnostic experiment"
             echo
             echo "> Experimental only: Go 1.26 GOEXPERIMENT=simd on amd64. The production distance kernel is unchanged."
             echo
-            if [[ -f .artifacts/simd256-crosslang.md ]]; then
-              cat .artifacts/simd256-crosslang.md
-            else
-              echo "The SIMD256 matrix did not complete."
-            fi
+            if [[ -f .artifacts/simd256-crosslang.md ]]; then cat .artifacts/simd256-crosslang.md; else echo "The SIMD256 matrix did not complete."; fi
             echo
-            echo "> Dataset, query seeds, topology, and exact squared-L2 ground truth match the existing cross-language benchmark. The normal Go vs hnswlib vs USearch workflow runs independently on the same PR."
+            echo "## Random-access function-value distance benchmark"
+            echo '```text'
+            cat .artifacts/simd256-random-access.txt 2>/dev/null || true
+            echo '```'
+            echo
+            echo "## Scalar CPU profile: top"
+            echo '```text'
+            cat .artifacts/scalar-100k-ef64.pprof-top.txt 2>/dev/null || true
+            echo '```'
+            echo
+            echo "## SIMD256 CPU profile: top"
+            echo '```text'
+            cat .artifacts/simd256-100k-ef64.pprof-top.txt 2>/dev/null || true
+            echo '```'
+            echo
+            echo "> Dataset, query seeds, topology, and exact squared-L2 ground truth match the existing cross-language benchmark. Counted builds and CPU-profiled builds are separate from the uninstrumented timing matrix."
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload SIMD256 results
