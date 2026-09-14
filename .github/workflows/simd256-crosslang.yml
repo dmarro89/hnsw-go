@@ -5,6 +5,7 @@ on:
     branches: ["main"]
     paths:
       - "benchmarks/crosslang/simd256.py"
+      - "benchmarks/crosslang/simd256_paired.py"
       - "benchmarks/crosslang/simd256-go/**"
       - "benchmarks/distance_kernel_simd_test.go"
       - ".github/workflows/simd256-crosslang.yml"
@@ -17,7 +18,7 @@ jobs:
   simd256:
     name: Scalar vs SIMD256 build and recall
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 60
     env:
       GOMAXPROCS: 1
       GOEXPERIMENT: simd
@@ -63,14 +64,25 @@ jobs:
           set -euo pipefail
           python benchmarks/crosslang/simd256.py | tee .artifacts/simd256-crosslang.md
 
-      - name: Summarize CPU profiles
+      - name: Run paired ABBA build benchmark
         shell: bash
         run: |
           set -euo pipefail
-          go tool pprof -top -nodecount=30 .artifacts/simd256-go .artifacts/scalar-100k-ef64.cpu.pprof > .artifacts/scalar-100k-ef64.pprof-top.txt
-          go tool pprof -top -cum -nodecount=30 .artifacts/simd256-go .artifacts/scalar-100k-ef64.cpu.pprof > .artifacts/scalar-100k-ef64.pprof-cum.txt
-          go tool pprof -top -nodecount=30 .artifacts/simd256-go .artifacts/simd256-100k-ef64.cpu.pprof > .artifacts/simd256-100k-ef64.pprof-top.txt
-          go tool pprof -top -cum -nodecount=30 .artifacts/simd256-go .artifacts/simd256-100k-ef64.cpu.pprof > .artifacts/simd256-100k-ef64.pprof-cum.txt
+          python benchmarks/crosslang/simd256_paired.py | tee .artifacts/simd256-paired.md
+
+      - name: Summarize CPU profiles
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -f .artifacts/scalar-100k-ef64.cpu.pprof ]]; then
+            go tool pprof -top -nodecount=30 .artifacts/simd256-go .artifacts/scalar-100k-ef64.cpu.pprof > .artifacts/scalar-100k-ef64.pprof-top.txt
+            go tool pprof -top -cum -nodecount=30 .artifacts/simd256-go .artifacts/scalar-100k-ef64.cpu.pprof > .artifacts/scalar-100k-ef64.pprof-cum.txt
+          fi
+          if [[ -f .artifacts/simd256-100k-ef64.cpu.pprof ]]; then
+            go tool pprof -top -nodecount=30 .artifacts/simd256-go .artifacts/simd256-100k-ef64.cpu.pprof > .artifacts/simd256-100k-ef64.pprof-top.txt
+            go tool pprof -top -cum -nodecount=30 .artifacts/simd256-go .artifacts/simd256-100k-ef64.cpu.pprof > .artifacts/simd256-100k-ef64.pprof-cum.txt
+          fi
 
       - name: Publish SIMD256 comparison
         if: always()
@@ -82,6 +94,8 @@ jobs:
             echo "> Experimental only: Go 1.26 GOEXPERIMENT=simd on amd64. The production distance kernel is unchanged."
             echo
             if [[ -f .artifacts/simd256-crosslang.md ]]; then cat .artifacts/simd256-crosslang.md; else echo "The SIMD256 matrix did not complete."; fi
+            echo
+            if [[ -f .artifacts/simd256-paired.md ]]; then cat .artifacts/simd256-paired.md; else echo "The paired ABBA benchmark did not complete."; fi
             echo
             echo "## Random-access function-value distance benchmark"
             echo '```text'
@@ -98,7 +112,7 @@ jobs:
             cat .artifacts/simd256-100k-ef64.pprof-top.txt 2>/dev/null || true
             echo '```'
             echo
-            echo "> Dataset, query seeds, topology, and exact squared-L2 ground truth match the existing cross-language benchmark. Counted builds and CPU-profiled builds are separate from the uninstrumented timing matrix."
+            echo "> Dataset, query seeds, topology, and exact squared-L2 ground truth match the existing cross-language benchmark. Counted builds, profiled builds, and paired timing builds are independent runs."
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload SIMD256 results
