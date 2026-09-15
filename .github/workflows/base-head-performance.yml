@@ -1,0 +1,33 @@
+name: Paired base-head HNSW performance
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  paired-performance:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      GOMAXPROCS: 1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - name: Install dependency
+        run: python -m pip install numpy==2.3.3
+      - name: Run paired benchmark
+        run: |
+          mkdir -p .artifacts
+          python benchmarks/crosslang/base_head_paired.py | tee .artifacts/base-head-paired.md
+      - name: Publish comparison
+        if: always()
+        run: cat .artifacts/base-head-paired.md >> "$GITHUB_STEP_SUMMARY" 2>/dev/null || true
