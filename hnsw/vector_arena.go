@@ -144,9 +144,13 @@ func (h *HNSW) searchLayerArena(query []float32, entries []int, ef, level int, d
 	defer pool.PutMaxHeap(nearest)
 
 	for _, id := range entries {
-		if id < 0 || id >= len(h.Nodes) || h.markVisitedArena(id, stamp) {
+		if id < 0 || id >= len(h.Nodes) {
 			continue
 		}
+		if h.visitedIDs[id] == stamp {
+			continue
+		}
+		h.visitedIDs[id] = stamp
 		d := h.DistanceFunc(query, arenaVector(arena, dim, id))
 		candidates.Push(structs.NewNodeHeap(d, id))
 		nearest.Push(structs.NewNodeHeap(d, id))
@@ -168,9 +172,13 @@ func (h *HNSW) searchLayerArena(query []float32, entries []int, ef, level int, d
 			continue
 		}
 		for _, id := range node.Neighbors[level] {
-			if id < 0 || id >= len(h.Nodes) || h.markVisitedArena(id, stamp) {
+			if id < 0 || id >= len(h.Nodes) {
 				continue
 			}
+			if h.visitedIDs[id] == stamp {
+				continue
+			}
+			h.visitedIDs[id] = stamp
 			d := h.DistanceFunc(query, arenaVector(arena, dim, id))
 			if nearest.Len() >= ef && d >= nearest.Peek().Dist {
 				continue
@@ -193,17 +201,6 @@ func (h *HNSW) searchLayerArena(query []float32, entries []int, ef, level int, d
 		dst[i] = nearest.Pop().Id
 	}
 	return dst
-}
-
-func (h *HNSW) markVisitedArena(id, stamp int) bool {
-	if id >= len(h.visitedIDs) {
-		h.ensureVisitedCapacity(id)
-	}
-	if h.visitedIDs[id] == stamp {
-		return true
-	}
-	h.visitedIDs[id] = stamp
-	return false
 }
 
 func (h *HNSW) updateConnectionsArena(q *structs.Node, neighbors []int, level, maxConn int, arena []float32, dim int) {
