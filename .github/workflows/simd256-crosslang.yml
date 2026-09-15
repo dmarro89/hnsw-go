@@ -1,4 +1,4 @@
-name: SIMD256 cross-language experiment
+name: SIMD256 post-arena experiment
 
 on:
   pull_request:
@@ -16,7 +16,7 @@ on:
 
 jobs:
   simd256:
-    name: Scalar vs SIMD256 build and recall
+    name: Post-arena scalar vs SIMD256 build and recall
     runs-on: ubuntu-24.04
     timeout-minutes: 60
     env:
@@ -89,9 +89,9 @@ jobs:
         shell: bash
         run: |
           {
-            echo "# SIMD256 HNSW diagnostic experiment"
+            echo "# SIMD256 post-arena HNSW experiment"
             echo
-            echo "> Experimental only: Go 1.26 GOEXPERIMENT=simd on amd64. The production distance kernel is unchanged."
+            echo "> Experimental only: Go 1.26 GOEXPERIMENT=simd on amd64. Production distance kernel remains unchanged. This rerun follows the contiguous production vector-arena integration."
             echo
             if [[ -f .artifacts/simd256-crosslang.md ]]; then cat .artifacts/simd256-crosslang.md; else echo "The SIMD256 matrix did not complete."; fi
             echo
@@ -112,14 +112,14 @@ jobs:
             cat .artifacts/simd256-100k-ef64.pprof-top.txt 2>/dev/null || true
             echo '```'
             echo
-            echo "> Dataset, query seeds, topology, and exact squared-L2 ground truth match the existing cross-language benchmark. Counted builds, profiled builds, and paired timing builds are independent runs."
+            echo "> Dataset, query seeds, topology, exact squared-L2 ground truth, and corrected search semantics match the existing cross-language benchmark. Counted builds, profiled builds, and paired timing builds are independent runs."
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload SIMD256 results
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: simd256-crosslang-${{ github.run_id }}
+          name: post-arena-simd256-crosslang-${{ github.run_id }}
           path: .artifacts
           include-hidden-files: true
           if-no-files-found: error
