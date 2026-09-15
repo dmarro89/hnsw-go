@@ -1,19 +1,15 @@
 package hnsw
 
 func EuclideanDistance(a, b []float32) float32 {
-	var sum0, sum1, sum2, sum3 float32
+	var sum0, sum1 float32
 	i := 0
 
-	for ; i <= len(a)-4; i += 4 {
+	for ; i <= len(a)-2; i += 2 {
 		d0 := a[i] - b[i]
 		d1 := a[i+1] - b[i+1]
-		d2 := a[i+2] - b[i+2]
-		d3 := a[i+3] - b[i+3]
 
 		sum0 += d0 * d0
 		sum1 += d1 * d1
-		sum2 += d2 * d2
-		sum3 += d3 * d3
 	}
 
 	var sum float32
@@ -22,5 +18,5 @@ func EuclideanDistance(a, b []float32) float32 {
 		sum += d * d
 	}
 
-	return sum + sum0 + sum1 + sum2 + sum3
+	return sum + sum0 + sum1
 }
