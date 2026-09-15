@@ -1,0 +1,63 @@
+name: Paired PR serial build
+
+on:
+  pull_request:
+    paths:
+      - 'hnsw/**'
+      - 'benchmarks/crosslang/go/**'
+      - '.github/workflows/pr-serial-paired.yml'
+
+jobs:
+  paired-serial:
+    runs-on: ubuntu-24.04
+    env:
+      GOMAXPROCS: 1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Generate deterministic vectors
+        run: |
+          python3 - <<'PY'
+          import random, struct
+          random.seed(424242)
+          n, d = 100000, 128
+          with open('/tmp/vectors.f32','wb') as f:
+              for _ in range(n*d):
+                  f.write(struct.pack('<f', random.random()))
+          PY
+      - name: Build base and head runners
+        run: |
+          git worktree add /tmp/base "${{ github.event.pull_request.base.sha }}"
+          (cd /tmp/base && go build -o /tmp/base-runner ./benchmarks/crosslang/go)
+          go build -o /tmp/head-runner ./benchmarks/crosslang/go
+      - name: Paired ABBA 100k build
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import csv, statistics, subprocess
+          configs=[64,200]
+          rows=[]
+          for ef in configs:
+              ratios=[]
+              for cycle in range(3):
+                  order=[('base','/tmp/base-runner'),('head','/tmp/head-runner'),('head','/tmp/head-runner'),('base','/tmp/base-runner')]
+                  times={'base':[],'head':[]}
+                  for label,exe in order:
+                      out=f'/tmp/{label}-{ef}-{cycle}-{len(times[label])}.csv'
+                      subprocess.run([exe,'/tmp/vectors.f32','100000','128',str(ef),'1',out],check=True)
+                      with open(out) as f:
+                          r=next(csv.DictReader(f)); times[label].append(float(r['seconds']))
+                  for b,h in zip(times['base'], reversed(times['head'])):
+                      ratios.append(b/h)
+              med=statistics.median(ratios)
+              print(f'efC={ef}: head speedup median={med:.4f}x; pairs='+';'.join(f'{x:.4f}' for x in ratios))
+              rows.append((ef,med))
+          if any(m < 1.02 for _,m in rows):
+              raise SystemExit('paired promotion gate failed: require >=1.02x median for both efC values')
+          PY
