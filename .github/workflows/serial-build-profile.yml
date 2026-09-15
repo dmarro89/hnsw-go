@@ -62,24 +62,26 @@ jobs:
           prefix="$PWD/.artifacts/serial-100k-128d-efc${HNSW_PROFILE_EF_CONSTRUCTION}"
           bin="$PWD/.artifacts/benchmarks.test"
 
-          go tool pprof -top -nodecount=40 "$bin" "${prefix}-cpu.pprof" > .artifacts/cpu-top.txt
-          go tool pprof -top -cum -nodecount=40 "$bin" "${prefix}-cpu.pprof" > .artifacts/cpu-top-cumulative.txt
-          go tool pprof -top -alloc_space -nodecount=40 "$bin" "${prefix}-heap.pprof" > .artifacts/heap-alloc-space.txt
-          go tool pprof -top -alloc_objects -nodecount=40 "$bin" "${prefix}-heap.pprof" > .artifacts/heap-alloc-objects.txt
-          go tool pprof -top -inuse_space -nodecount=40 "$bin" "${prefix}-heap.pprof" > .artifacts/heap-inuse-space.txt
+          go tool pprof -top -nodecount=60 "$bin" "${prefix}-cpu.pprof" > .artifacts/cpu-top.txt
+          go tool pprof -top -cum -nodecount=60 "$bin" "${prefix}-cpu.pprof" > .artifacts/cpu-top-cumulative.txt
+          go tool pprof -top -alloc_space -nodecount=60 "$bin" "${prefix}-heap.pprof" > .artifacts/heap-alloc-space.txt
+          go tool pprof -top -alloc_objects -nodecount=60 "$bin" "${prefix}-heap.pprof" > .artifacts/heap-alloc-objects.txt
+          go tool pprof -top -inuse_space -nodecount=60 "$bin" "${prefix}-heap.pprof" > .artifacts/heap-inuse-space.txt
 
           go tool pprof -list='searchLayerWithEntriesBufferContext' "$bin" "${prefix}-cpu.pprof" > .artifacts/cpu-search-layer.txt || true
           go tool pprof -list='selectClosestNeighborIDs' "$bin" "${prefix}-cpu.pprof" > .artifacts/cpu-neighbor-pruning.txt || true
           go tool pprof -list='EuclideanDistance' "$bin" "${prefix}-cpu.pprof" > .artifacts/cpu-distance.txt || true
+          go tool pprof -list='vectorForNode' "$bin" "${prefix}-cpu.pprof" > .artifacts/cpu-vector-lookup.txt || true
 
       - name: Publish profile summary
         if: always()
         shell: bash
         run: |
           {
-            echo "## Serial build profile — efConstruction=${HNSW_PROFILE_EF_CONSTRUCTION}"
+            echo "## Post-arena serial build profile — efConstruction=${HNSW_PROFILE_EF_CONSTRUCTION}"
             echo
             echo "Configuration: 100k vectors, 128d float32, M=16, Mmax=16, Mmax0=32, GOMAXPROCS=4."
+            echo "This profile is intentionally captured after the production vector-arena integration so the next optimization is chosen from the new hot-path distribution rather than pre-arena evidence."
             echo
             echo "### Build result"
             echo '```text'
@@ -88,12 +90,22 @@ jobs:
             echo
             echo "### CPU top"
             echo '```text'
-            sed -n '1,45p' .artifacts/cpu-top.txt 2>/dev/null || true
+            sed -n '1,65p' .artifacts/cpu-top.txt 2>/dev/null || true
+            echo '```'
+            echo
+            echo "### CPU cumulative top"
+            echo '```text'
+            sed -n '1,65p' .artifacts/cpu-top-cumulative.txt 2>/dev/null || true
             echo '```'
             echo
             echo "### Allocation-space top"
             echo '```text'
-            sed -n '1,45p' .artifacts/heap-alloc-space.txt 2>/dev/null || true
+            sed -n '1,65p' .artifacts/heap-alloc-space.txt 2>/dev/null || true
+            echo '```'
+            echo
+            echo "### Allocation-object top"
+            echo '```text'
+            sed -n '1,65p' .artifacts/heap-alloc-objects.txt 2>/dev/null || true
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -101,7 +113,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: serial-build-profile-efc${{ matrix.efConstruction }}-${{ github.run_id }}
+          name: post-arena-serial-build-profile-efc${{ matrix.efConstruction }}-${{ github.run_id }}
           path: .artifacts
           include-hidden-files: true
           if-no-files-found: error
