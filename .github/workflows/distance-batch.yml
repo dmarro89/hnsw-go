@@ -1,0 +1,31 @@
+name: Arena distance batching experiment
+
+on:
+  pull_request:
+    paths:
+      - 'benchmarks/distance_batch_test.go'
+      - '.github/workflows/distance-batch.yml'
+      - 'hnsw/utils.go'
+  workflow_dispatch:
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-24.04
+    env:
+      GOMAXPROCS: 1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Correctness
+        run: go test ./benchmarks -run TestDistanceBatchArenaAgrees -count=1
+      - name: Benchmark random-access batching
+        run: |
+          mkdir -p .artifacts
+          go test ./benchmarks -run '^$' -bench '^BenchmarkDistanceBatchArena$' -benchmem -count=5 | tee .artifacts/distance-batch.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: distance-batch-${{ github.run_id }}
+          path: .artifacts/distance-batch.txt
