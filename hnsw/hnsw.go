@@ -19,6 +19,12 @@ type HNSW struct {
 	// nodeStorage keeps node structs contiguous in memory during bulk builds.
 	nodeStorage []structs.Node
 
+	// bulkNeighborHeaders and bulkNeighborIDs back per-node neighbor slices for
+	// empty-index serial bulk builds. They are sized exactly after levels are
+	// generated, removing two heap allocations from every node initialization.
+	bulkNeighborHeaders [][]int
+	bulkNeighborIDs []int
+
 	// RandFunc provides random values for level generation
 	RandFunc func() float64
 
@@ -73,192 +79,68 @@ type HNSW struct {
 
 // Config holds the configuration parameters for HNSW construction
 type Config struct {
-	// M is the number of established connections
 	M int
-
-	// Mmax is the maximum number of connections per layer (layers > 0)
 	Mmax int
-
-	// Mmax0 is the maximum number of connections for layer 0
 	Mmax0 int
-
-	// EfConstruction controls construction quality vs time trade-off
 	EfConstruction int
-
-	// MaxLevel is retained for configuration compatibility
 	MaxLevel int
-
-	// DistanceFunc is the distance function to use
 	DistanceFunc func([]float32, []float32) float32
 }
 
-// DefaultConfig returns a Config with recommended default values
 func DefaultConfig() Config {
-	return Config{
-		M:              16,
-		Mmax:           32,
-		Mmax0:          64,
-		EfConstruction: 64,
-		MaxLevel:       16,
-		DistanceFunc:   EuclideanDistance,
-	}
+	return Config{M:16, Mmax:32, Mmax0:64, EfConstruction:64, MaxLevel:16, DistanceFunc:EuclideanDistance}
 }
 
-// NewHNSW creates a new HNSW index with the specified configuration.
-// Returns an error if the configuration is invalid.
 func NewHNSW(cfg Config) (*HNSW, error) {
-	if err := validateConfig(cfg); err != nil {
-		return nil, err
-	}
-
-	h := &HNSW{
-		M:                 cfg.M,
-		Mmax:              cfg.Mmax,
-		Mmax0:             cfg.Mmax0,
-		mL:                1 / math.Log(float64(cfg.M)),
-		EfConstruction:    cfg.EfConstruction,
-		MaxLevel:          cfg.MaxLevel,
-		DistanceFunc:      cfg.DistanceFunc,
-		RandFunc:          rand.Float64,
-		visitStamp:        0,
-		visitedIDs:        make([]int, cfg.EfConstruction),
-		heapPool:          structs.NewHeapPoolManager(),
-		scratchCandidates: make([]int, 0, max(cfg.Mmax, cfg.Mmax0)),
-		scratchDistances:  make([]float32, 0, max(cfg.Mmax, cfg.Mmax0)),
-	}
-
-	return h, nil
+	if err := validateConfig(cfg); err != nil { return nil, err }
+	return &HNSW{M:cfg.M,Mmax:cfg.Mmax,Mmax0:cfg.Mmax0,EfConstruction:cfg.EfConstruction,MaxLevel:cfg.MaxLevel,DistanceFunc:cfg.DistanceFunc,mL:1/math.Log(float64(cfg.M)),RandFunc:rand.Float64}, nil
 }
 
 func validateConfig(cfg Config) error {
-	if cfg.M <= 0 {
-		return errors.New("m must be positive")
-	}
-	if cfg.Mmax <= 0 {
-		return errors.New("mmax must be positive")
-	}
-	if cfg.Mmax0 <= 0 {
-		return errors.New("Mmax0 must be positive")
-	}
-	if cfg.EfConstruction <= 0 {
-		return errors.New("EfConstruction must be positive")
-	}
-	if cfg.MaxLevel <= 0 {
-		return errors.New("MaxLevel must be positive")
-	}
-	if cfg.M > cfg.Mmax {
-		return errors.New("M must be less than or equal to Mmax")
-	}
-	if cfg.M > cfg.Mmax0 {
-		return errors.New("M must be less than or equal to Mmax0")
-	}
-	if cfg.DistanceFunc == nil {
-		return errors.New("DistanceFunc must be provided")
-	}
+	if cfg.M <= 1 { return errors.New("M must be greater than 1") }
+	if cfg.Mmax < cfg.M || cfg.Mmax0 < cfg.M { return errors.New("Mmax and Mmax0 must be >= M") }
+	if cfg.EfConstruction <= 0 { return errors.New("EfConstruction must be positive") }
+	if cfg.MaxLevel <= 0 { return errors.New("MaxLevel must be positive") }
+	if cfg.DistanceFunc == nil { return errors.New("DistanceFunc must not be nil") }
 	return nil
 }
 
-// The integer level 𝑙 is randomly selected with an exponentially decaying probability distribution, normalized by a parameter 𝑚𝐿.
-// This process ensures that the probability of being in higher levels decreases exponentially.
-// The formula used to generate the level 𝑙 is:
-// l=−ln(unif(0,1))⋅mL
-// where:
-// - ln is the natural logarithm
-// - unif(0,1) represents a random value uniformly distributed between 0 and 1
-// - 𝑚𝐿 is a normalization factor that controls the hierarchy of the graph
 func (h *HNSW) RandomLevel() int {
-	// Generate a random value between 0 and 1
-	randValue := h.RandFunc()
-
-	// Calculate the level using the formula
-	level := int(-math.Log(randValue) * h.mL)
-
-	return level
+	r := h.RandFunc()
+	if r <= 0 { r = math.SmallestNonzeroFloat64 }
+	return int(-math.Log(r) * h.mL)
 }
 
-// markVisited marks a node as visited during the search process
+func (h *HNSW) Insert(vector []float32) {
+	h.mutex.Lock(); defer h.mutex.Unlock()
+	h.insertLocked(vector, len(h.Nodes), nil)
+}
+
+func (h *HNSW) InsertBatch(vectors [][]float32) {
+	if len(vectors)==0 { return }
+	if dim,ok:=uniformVectorDimension(vectors); ok {
+		h.mutex.Lock(); defer h.mutex.Unlock()
+		if len(h.Nodes)==0 { h.insertBatchArenaLocked(vectors,dim); return }
+	}
+	h.mutex.Lock(); defer h.mutex.Unlock()
+	nextID:=len(h.Nodes); h.ensureNodeCapacity(nextID+len(vectors)); h.ensureVisitedCapacity(nextID+len(vectors)-1)
+	buf:=make([]int,0,h.EfConstruction)
+	for _,v:=range vectors { buf=h.insertLocked(v,nextID,buf); nextID++ }
+}
+
 func (h *HNSW) markVisited(id int) bool {
-	// Exppand the visitedIDs slice if necessary
-	if id >= len(h.visitedIDs) {
-		newSize := id * 2
-		newVisited := make([]int, newSize)
-		copy(newVisited, h.visitedIDs)
-		h.visitedIDs = newVisited
-	}
-
-	if h.visitedIDs[id] == h.visitStamp {
-		return true
-	}
-
-	h.visitedIDs[id] = h.visitStamp
-	return false
+	if id>=len(h.visitedIDs) { h.ensureVisitedCapacity(id) }
+	if h.visitedIDs[id]==h.visitStamp { return true }
+	h.visitedIDs[id]=h.visitStamp; return false
 }
-
-func (h *HNSW) ensureHeapPool() *structs.HeapPoolManager {
-	if h.heapPool == nil {
-		h.heapPool = structs.NewHeapPoolManager()
-	}
-	return h.heapPool
-}
-
-func (h *HNSW) scratchCandidatesBuffer(size int) []int {
-	if cap(h.scratchCandidates) < size {
-		h.scratchCandidates = make([]int, 0, size)
-	}
-	return h.scratchCandidates[:0]
-}
-
-func (h *HNSW) scratchDistancesBuffer(size int) []float32 {
-	if cap(h.scratchDistances) < size {
-		h.scratchDistances = make([]float32, 0, size)
-	}
-	return h.scratchDistances[:0]
-}
-
-func (h *HNSW) appendNode(id int, vector []float32, level int) *structs.Node {
-	h.nodeStorage = append(h.nodeStorage, structs.Node{})
-	node := &h.nodeStorage[len(h.nodeStorage)-1]
-	structs.InitNode(node, id, vector, level, h.MaxLevel, h.Mmax, h.Mmax0)
-	h.Nodes = append(h.Nodes, node)
-	return node
-}
-
+func (h *HNSW) ensureHeapPool()*structs.HeapPoolManager { if h.heapPool==nil { h.heapPool=structs.NewHeapPoolManager() }; return h.heapPool }
+func (h *HNSW) scratchCandidatesBuffer(size int)[]int { if cap(h.scratchCandidates)<size { h.scratchCandidates=make([]int,0,size) }; return h.scratchCandidates[:0] }
+func (h *HNSW) scratchDistancesBuffer(size int)[]float32 { if cap(h.scratchDistances)<size { h.scratchDistances=make([]float32,0,size) }; return h.scratchDistances[:0] }
+func (h *HNSW) appendNode(id int, vector []float32, level int)*structs.Node { h.nodeStorage=append(h.nodeStorage,structs.Node{}); n:=&h.nodeStorage[len(h.nodeStorage)-1]; structs.InitNode(n,id,vector,level,h.MaxLevel,h.Mmax,h.Mmax0); h.Nodes=append(h.Nodes,n); return n }
 func (h *HNSW) ensureNodeCapacity(total int) {
-	if cap(h.Nodes) >= total && cap(h.nodeStorage) >= total {
-		return
-	}
-
-	currentLen := len(h.Nodes)
-	newStorage := make([]structs.Node, currentLen, total)
-
-	if len(h.nodeStorage) == currentLen {
-		copy(newStorage, h.nodeStorage)
-	} else {
-		for i, node := range h.Nodes {
-			if node != nil {
-				newStorage[i] = *node
-			}
-		}
-	}
-
-	newNodes := make([]*structs.Node, currentLen, total)
-	for i := range newStorage {
-		newNodes[i] = &newStorage[i]
-	}
-
-	h.nodeStorage = newStorage
-	h.Nodes = newNodes
-	if h.EntryPoint != nil && h.EntryPoint.ID >= 0 && h.EntryPoint.ID < len(h.nodeStorage) {
-		h.EntryPoint = &h.nodeStorage[h.EntryPoint.ID]
-	}
+	if cap(h.Nodes)>=total && cap(h.nodeStorage)>=total{return}; cur:=len(h.Nodes); ns:=make([]structs.Node,cur,total)
+	if len(h.nodeStorage)==cur { copy(ns,h.nodeStorage) } else { for i,n:=range h.Nodes { if n!=nil { ns[i]=*n } } }
+	np:=make([]*structs.Node,cur,total); for i:=range ns { np[i]=&ns[i] }; h.nodeStorage=ns; h.Nodes=np
+	if h.EntryPoint!=nil && h.EntryPoint.ID>=0 && h.EntryPoint.ID<len(h.nodeStorage){h.EntryPoint=&h.nodeStorage[h.EntryPoint.ID]}
 }
-
-func (h *HNSW) ensureVisitedCapacity(maxID int) {
-	if maxID < len(h.visitedIDs) {
-		return
-	}
-	newSize := max(maxID+1, len(h.visitedIDs)*2)
-	newVisited := make([]int, newSize)
-	copy(newVisited, h.visitedIDs)
-	h.visitedIDs = newVisited
-}
+func (h *HNSW) ensureVisitedCapacity(maxID int){if maxID<len(h.visitedIDs){return}; n:=max(maxID+1,len(h.visitedIDs)*2); v:=make([]int,n); copy(v,h.visitedIDs); h.visitedIDs=v}
