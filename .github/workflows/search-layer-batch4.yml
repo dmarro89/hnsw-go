@@ -1,0 +1,20 @@
+name: Search-layer four-distance experiment
+
+on:
+  pull_request:
+    paths:
+      - 'hnsw/vector_arena.go'
+      - 'hnsw/vector_arena_batch4_test.go'
+      - '.github/workflows/search-layer-batch4.yml'
+  workflow_dispatch:
+
+jobs:
+  correctness:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - run: go test ./... -count=1
