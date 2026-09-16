@@ -1,0 +1,31 @@
+name: Threshold distance experiment
+
+on:
+  pull_request:
+    paths:
+      - 'hnsw/threshold_distance_bench_test.go'
+      - '.github/workflows/threshold-distance-bench.yml'
+  workflow_dispatch:
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      GOMAXPROCS: 1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Benchmark full vs threshold L2
+        shell: bash
+        run: |
+          set -o pipefail
+          go test ./hnsw -run '^$' -bench '^BenchmarkEuclideanThreshold' -benchmem -count=8 | tee threshold-distance.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: threshold-distance-${{ github.run_id }}
+          path: threshold-distance.txt
