@@ -1,0 +1,44 @@
+name: Bulk neighbor arena promotion
+on:
+  pull_request:
+    paths:
+      - 'hnsw/bulk_neighbor_arena.go'
+      - 'hnsw/vector_arena.go'
+      - 'hnsw/bulk_neighbor_arena_test.go'
+      - '.github/workflows/bulk-neighbor-arena.yml'
+      - 'benchmarks/crosslang/base_head_paired.py'
+  workflow_dispatch:
+jobs:
+  correctness:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - run: go test ./...
+  paired-real-hnsw:
+    runs-on: ubuntu-24.04
+    env:
+      GOMAXPROCS: 1
+      MIN_SPEEDUP: '1.02'
+      BASE_SHA: 8198eed606dd4b0497680d98c2283dc3d3ed23ba
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Paired 100k x 128d efC64/200 ABBA
+        shell: bash
+        run: |
+          set -o pipefail
+          python3 benchmarks/crosslang/base_head_paired.py | tee paired.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: bulk-neighbor-arena-paired-${{ github.run_id }}
+          path: paired.txt
