@@ -1,0 +1,27 @@
+name: Search entry distance-call profile
+on:
+  pull_request:
+    paths:
+      - 'benchmarks/search_entry_recompute_test.go'
+      - '.github/workflows/search-entry-call-profile.yml'
+jobs:
+  profile:
+    runs-on: ubuntu-24.04
+    env:
+      GOMAXPROCS: 1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Split search entry and expansion calls
+        shell: bash
+        run: |
+          set -o pipefail
+          go test ./benchmarks -run TestSearchEntryDistanceRecompute -count=1 -v | tee search-entry-calls.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: search-entry-call-profile-${{ github.run_id }}
+          path: search-entry-calls.txt
