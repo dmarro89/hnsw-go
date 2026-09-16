@@ -1,0 +1,20 @@
+name: Node storage arena experiment
+on:
+  pull_request:
+    paths:
+      - 'benchmarks/node_storage_test.go'
+      - '.github/workflows/node-storage-arena.yml'
+  workflow_dispatch:
+jobs:
+  benchmark:
+    runs-on: ubuntu-24.04
+    env:
+      GOMAXPROCS: 1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Benchmark storage construction
+        run: go test ./benchmarks -run '^$' -bench '^BenchmarkNodeNeighborStorage$' -benchmem -count=7
