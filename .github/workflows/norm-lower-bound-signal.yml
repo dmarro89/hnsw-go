@@ -1,0 +1,30 @@
+name: Norm lower-bound signal
+
+on:
+  pull_request:
+    paths:
+      - 'hnsw/norm_lower_bound_signal_test.go'
+      - '.github/workflows/norm-lower-bound-signal.yml'
+
+jobs:
+  signal:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      GOMAXPROCS: 1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Measure exact norm lower-bound signal
+        shell: bash
+        run: |
+          set -o pipefail
+          go test ./hnsw -run '^TestNormLowerBoundSignal$' -count=1 -v | tee norm-lower-bound-signal.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: norm-lower-bound-signal-${{ github.run_id }}
+          path: norm-lower-bound-signal.txt
