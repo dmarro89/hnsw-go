@@ -1,0 +1,20 @@
+name: Search-layer batch4 recall gate
+
+on:
+  pull_request:
+    paths:
+      - 'hnsw/**'
+      - '.github/workflows/search-layer-batch4-recall.yml'
+  workflow_dispatch:
+
+jobs:
+  recall:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Corrected search semantics and tests
+        run: go test ./... -count=1
