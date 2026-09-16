@@ -2,6 +2,7 @@ package hnsw
 
 import (
 	"math"
+	"reflect"
 
 	"dmarro89.github.com/hnsw-go/structs"
 )
@@ -15,14 +16,59 @@ func (h *HNSW) insertBatchArenaLocked(vectors [][]float32, dim int) {
 		copy(arena[i*dim:(i+1)*dim], vector)
 	}
 
+	// The blocked copy is experimental construction scratch for the default
+	// Euclidean metric. It stores four vector lanes per coordinate so one query
+	// load feeds four independent candidate distances. Custom metrics retain the
+	// existing row-major path unchanged.
+	var blocked []float32
+	if reflect.ValueOf(h.DistanceFunc).Pointer() == reflect.ValueOf(EuclideanDistance).Pointer() {
+		blocked = makeBlockedArena4(vectors, dim)
+	}
+
 	h.ensureNodeCapacity(len(vectors))
 	h.ensureVisitedCapacity(len(vectors) - 1)
 	searchBuf := make([]int, 0, h.EfConstruction)
 	for id := range vectors {
 		start := id * dim
 		vector := arena[start : start+dim]
-		searchBuf = h.insertLockedArena(vector, id, searchBuf, arena, dim)
+		searchBuf = h.insertLockedArena(vector, id, searchBuf, arena, blocked, dim)
 	}
+}
+
+func makeBlockedArena4(vectors [][]float32, dim int) []float32 {
+	blocks := (len(vectors) + 3) / 4
+	out := make([]float32, blocks*dim*4)
+	for id, vector := range vectors {
+		base, lane := (id/4)*dim*4, id%4
+		for d := 0; d < dim; d++ {
+			out[base+d*4+lane] = vector[d]
+		}
+	}
+	return out
+}
+
+func distanceArena4(query, blocked []float32, dim int, ids [4]int) [4]float32 {
+	var base [4]int
+	var lane [4]int
+	for j, id := range ids {
+		base[j] = (id / 4) * dim * 4
+		lane[j] = id % 4
+		_ = blocked[base[j]+(dim-1)*4+lane[j]]
+	}
+	var s0, s1, s2, s3 float32
+	for d := 0; d < dim; d++ {
+		q := query[d]
+		off := d * 4
+		x0 := q - blocked[base[0]+off+lane[0]]
+		x1 := q - blocked[base[1]+off+lane[1]]
+		x2 := q - blocked[base[2]+off+lane[2]]
+		x3 := q - blocked[base[3]+off+lane[3]]
+		s0 += x0 * x0
+		s1 += x1 * x1
+		s2 += x2 * x2
+		s3 += x3 * x3
+	}
+	return [4]float32{s0, s1, s2, s3}
 }
 
 // InsertBatchArenaExperimental is retained for benchmark compatibility. The
@@ -77,7 +123,7 @@ func arenaVector(arena []float32, dim, id int) []float32 {
 	return arena[start : start+dim]
 }
 
-func (h *HNSW) insertLockedArena(vector []float32, id int, searchBuf []int, arena []float32, dim int) []int {
+func (h *HNSW) insertLockedArena(vector []float32, id int, searchBuf []int, arena, blocked []float32, dim int) []int {
 	level := h.RandomLevel()
 	newNode := h.appendNode(id, vector, level)
 	if h.EntryPoint == nil {
@@ -94,7 +140,7 @@ func (h *HNSW) insertLockedArena(vector []float32, id int, searchBuf []int, aren
 	}
 
 	for lc := int(math.Min(float64(L), float64(level))); lc >= 0; lc-- {
-		nearest := h.searchLayerArena(vector, entryPoints, h.EfConstruction, lc, searchBuf, arena, dim)
+		nearest := h.searchLayerArena(vector, entryPoints, h.EfConstruction, lc, searchBuf, arena, blocked, dim)
 		maxConn := h.Mmax
 		if lc == 0 {
 			maxConn = h.Mmax0
@@ -134,7 +180,7 @@ func (h *HNSW) greedySearchLayerArena(query []float32, entry *structs.Node, leve
 	}
 }
 
-func (h *HNSW) searchLayerArena(query []float32, entries []int, ef, level int, dst []int, arena []float32, dim int) []int {
+func (h *HNSW) searchLayerArena(query []float32, entries []int, ef, level int, dst []int, arena, blocked []float32, dim int) []int {
 	h.visitStamp++
 	stamp := h.visitStamp
 	pool := h.ensureHeapPool()
@@ -158,6 +204,17 @@ func (h *HNSW) searchLayerArena(query []float32, entries []int, ef, level int, d
 		return dst[:0]
 	}
 
+	process := func(id int, d float32) {
+		if nearest.Len() >= ef && d >= nearest.Peek().Dist {
+			return
+		}
+		candidates.Push(structs.NewNodeHeap(d, id))
+		nearest.Push(structs.NewNodeHeap(d, id))
+		if nearest.Len() > ef {
+			nearest.Pop()
+		}
+	}
+
 	for candidates.Len() > 0 {
 		current := candidates.Pop()
 		if nearest.Len() >= ef && current.Dist > nearest.Peek().Dist {
@@ -167,19 +224,44 @@ func (h *HNSW) searchLayerArena(query []float32, entries []int, ef, level int, d
 		if node == nil || level >= len(node.Neighbors) {
 			continue
 		}
+
+		if blocked == nil {
+			for _, id := range node.Neighbors[level] {
+				if id < 0 || id >= len(h.Nodes) || h.markVisitedArena(id, stamp) {
+					continue
+				}
+				process(id, h.DistanceFunc(query, arenaVector(arena, dim, id)))
+			}
+			continue
+		}
+
+		var ids [4]int
+		n := 0
+		flush := func() {
+			if n == 4 {
+				dists := distanceArena4(query, blocked, dim, ids)
+				for j := 0; j < 4; j++ {
+					process(ids[j], dists[j])
+				}
+			} else {
+				for j := 0; j < n; j++ {
+					process(ids[j], h.DistanceFunc(query, arenaVector(arena, dim, ids[j])))
+				}
+			}
+			n = 0
+		}
 		for _, id := range node.Neighbors[level] {
 			if id < 0 || id >= len(h.Nodes) || h.markVisitedArena(id, stamp) {
 				continue
 			}
-			d := h.DistanceFunc(query, arenaVector(arena, dim, id))
-			if nearest.Len() >= ef && d >= nearest.Peek().Dist {
-				continue
+			ids[n] = id
+			n++
+			if n == 4 {
+				flush()
 			}
-			candidates.Push(structs.NewNodeHeap(d, id))
-			nearest.Push(structs.NewNodeHeap(d, id))
-			if nearest.Len() > ef {
-				nearest.Pop()
-			}
+		}
+		if n != 0 {
+			flush()
 		}
 	}
 
