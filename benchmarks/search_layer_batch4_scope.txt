@@ -1,0 +1,1 @@
+Scope: searchLayerArena only. greedySearchLayerArena and selectClosestArena remain scalar to isolate the real traversal batching hypothesis.
