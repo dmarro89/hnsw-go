@@ -12,24 +12,21 @@ import (
 )
 
 // Evidence-only: split searchLayerArena distance calls between entry-point
-// initialization and graph-neighbor expansion. If entry recomputation is
-// material, the next experiment can carry distances between layers without
-// changing graph traversal semantics.
+// initialization and graph-neighbor expansion. Stack attribution is expensive,
+// so use 10k vectors: this experiment needs the call-site ratio, while #43
+// already established absolute 100k call counts for the production workload.
 func TestSearchEntryDistanceRecompute(t *testing.T) {
     for _, ef := range []int{64, 200} {
         var entry, expand, other atomic.Uint64
         cfg := hnsw.Config{M:16, Mmax:32, Mmax0:64, EfConstruction:ef, MaxLevel:16}
         cfg.DistanceFunc = func(a,b []float32) float32 {
-            pcs := make([]uintptr, 8)
-            n := runtime.Callers(2, pcs)
+            var pcs [8]uintptr
+            n := runtime.Callers(2, pcs[:])
             frames := runtime.CallersFrames(pcs[:n])
             classified := false
             for {
                 f, more := frames.Next()
                 if strings.Contains(f.Function, "searchLayerArena") {
-                    // line attribution distinguishes the entry loop from expansion.
-                    // Current production vector_arena.go: entry distance is before
-                    // the candidate loop; expansion distance is later.
                     if f.Line < 165 { entry.Add(1) } else { expand.Add(1) }
                     classified = true
                     break
@@ -41,7 +38,7 @@ func TestSearchEntryDistanceRecompute(t *testing.T) {
         }
         idx,err:=hnsw.NewHNSW(cfg); if err!=nil{t.Fatal(err)}
         lr:=rand.New(rand.NewPCG(11,22)); idx.RandFunc=lr.Float64
-        r:=rand.New(rand.NewPCG(33,44)); vectors:=make([][]float32,100000)
+        r:=rand.New(rand.NewPCG(33,44)); vectors:=make([][]float32,10000)
         for i:=range vectors { v:=make([]float32,128); for j:=range v {v[j]=r.Float32()}; vectors[i]=v }
         idx.InsertBatch(vectors)
         e,x,o:=entry.Load(),expand.Load(),other.Load()
