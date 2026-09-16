@@ -1,0 +1,28 @@
+name: Distance call-site profile
+on:
+  pull_request:
+    paths:
+      - 'hnsw/distance_call_profile_test.go'
+      - '.github/workflows/distance-call-profile.yml'
+  workflow_dispatch:
+jobs:
+  profile:
+    runs-on: ubuntu-24.04
+    env:
+      GOMAXPROCS: 1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Count production construction distance calls
+        shell: bash
+        run: |
+          set -o pipefail
+          go test ./hnsw -run TestProfileConstructionDistanceCallSites -count=1 -v | tee distance-calls.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: distance-call-profile-${{ github.run_id }}
+          path: distance-calls.txt
