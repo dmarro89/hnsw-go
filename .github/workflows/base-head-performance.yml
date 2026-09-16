@@ -1,0 +1,36 @@
+name: Base vs head real-HNSW performance
+
+on:
+  pull_request:
+    paths:
+      - 'hnsw/**'
+      - 'benchmarks/crosslang/base_head_paired.py'
+      - '.github/workflows/base-head-performance.yml'
+  workflow_dispatch:
+
+jobs:
+  paired:
+    runs-on: ubuntu-24.04
+    env:
+      GOMAXPROCS: 1
+      MIN_SPEEDUP: '1.02'
+      BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      HEAD_SHA: HEAD
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Paired 100k x 128d ABBA
+        shell: bash
+        run: |
+          set -o pipefail
+          python3 benchmarks/crosslang/base_head_paired.py | tee base-head-performance.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: base-head-performance-${{ github.run_id }}
+          path: base-head-performance.txt
