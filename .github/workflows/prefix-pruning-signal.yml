@@ -1,0 +1,29 @@
+name: Prefix pruning signal
+on:
+  pull_request:
+    paths:
+      - 'hnsw/prefix_pruning_signal_test.go'
+      - '.github/workflows/prefix-pruning-signal.yml'
+  workflow_dispatch:
+jobs:
+  signal:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      GOMAXPROCS: 1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Measure exact prefix lower-bound signal
+        shell: bash
+        run: |
+          set -o pipefail
+          go test ./hnsw -run '^TestPrefixPruningSignal$' -count=1 -v | tee prefix-pruning-signal.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: prefix-pruning-signal-${{ github.run_id }}
+          path: prefix-pruning-signal.txt
