@@ -1,0 +1,36 @@
+name: Search-layer batch4 promotion matrix
+
+on:
+  pull_request:
+    paths:
+      - 'hnsw/**'
+      - 'benchmarks/crosslang/**'
+      - '.github/workflows/search-layer-batch4-promotion.yml'
+  workflow_dispatch:
+
+jobs:
+  quality:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Go correctness
+        run: go test ./... -count=1
+      - name: Cross-language quality/performance matrix
+        shell: bash
+        run: |
+          set -o pipefail
+          if [ -f benchmarks/crosslang/compare.py ]; then
+            python3 benchmarks/crosslang/compare.py | tee cross-language.txt
+          else
+            echo 'compare.py unavailable' | tee cross-language.txt
+            exit 1
+          fi
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: search-layer-batch4-promotion-${{ github.run_id }}
+          path: cross-language.txt
