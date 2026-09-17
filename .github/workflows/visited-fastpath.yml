@@ -1,0 +1,27 @@
+name: Arena visited fast-path experiment
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'hnsw/visited_fastpath_bench_test.go'
+      - '.github/workflows/visited-fastpath.yml'
+
+jobs:
+  benchmark:
+    runs-on: ubuntu-24.04
+    env:
+      GOMAXPROCS: 1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Benchmark hit/miss visited paths
+        run: |
+          set -euo pipefail
+          go test ./hnsw -run '^$' -bench '^BenchmarkVisitedArenaFastPath$' -benchmem -benchtime=3s -count=5 | tee visited-fastpath.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: arena-visited-fastpath-${{ github.run_id }}
+          path: visited-fastpath.txt
