@@ -22,7 +22,7 @@ jobs:
         with:
           go-version-file: go.mod
           cache: false
-      - name: Run isolated ABBA
+      - name: Run isolated BAAB
         shell: bash
         run: |
           set -euo pipefail
@@ -34,13 +34,13 @@ jobs:
             git checkout --detach "$sha" >/dev/null
             go test ./benchmarks -run '^$' -bench "^BenchmarkVectorArenaBuild100k/production_arena/100k/ef${ef}$" -benchmem -benchtime=1x -count=1 | tee -a "$GITHUB_WORKSPACE/.artifacts/replace-top-abba.txt"
           }
-          echo 'order=A(main),B(replace),B(replace),A(main)' | tee .artifacts/replace-top-abba.txt
+          echo 'order=B(replace),A(main),A(main),B(replace)' | tee .artifacts/replace-top-abba.txt
           for ef in 64 200; do
             echo "=== ef${ef} ===" | tee -a .artifacts/replace-top-abba.txt
-            run_one A "$BASE_SHA" "$ef"
-            run_one B "$HEAD_SHA" "$ef"
             run_one B "$HEAD_SHA" "$ef"
             run_one A "$BASE_SHA" "$ef"
+            run_one A "$BASE_SHA" "$ef"
+            run_one B "$HEAD_SHA" "$ef"
           done
       - uses: actions/upload-artifact@v4
         if: always()
