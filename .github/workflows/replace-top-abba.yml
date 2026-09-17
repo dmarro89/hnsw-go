@@ -1,0 +1,49 @@
+name: ReplaceTop arena ABBA
+
+on:
+  pull_request:
+    paths:
+      - 'hnsw/vector_arena.go'
+      - 'structs/maxheap.go'
+      - '.github/workflows/replace-top-abba.yml'
+  workflow_dispatch:
+
+jobs:
+  abba:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    env:
+      GOMAXPROCS: 1
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Run isolated ABBA
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .artifacts
+          HEAD_SHA="${{ github.event.pull_request.head.sha }}"
+          BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          run_one() {
+            label="$1"; sha="$2"; ef="$3"
+            git checkout --detach "$sha" >/dev/null
+            go test ./benchmarks -run '^$' -bench "^BenchmarkVectorArenaBuild100k/production_arena/100k/ef${ef}$" -benchmem -benchtime=1x -count=1 | tee -a "$GITHUB_WORKSPACE/.artifacts/replace-top-abba.txt"
+          }
+          echo 'order=A(main),B(replace),B(replace),A(main)' | tee .artifacts/replace-top-abba.txt
+          for ef in 64 200; do
+            echo "=== ef${ef} ===" | tee -a .artifacts/replace-top-abba.txt
+            run_one A "$BASE_SHA" "$ef"
+            run_one B "$HEAD_SHA" "$ef"
+            run_one B "$HEAD_SHA" "$ef"
+            run_one A "$BASE_SHA" "$ef"
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: replace-top-abba-${{ github.run_id }}
+          path: .artifacts/replace-top-abba.txt
