@@ -8,22 +8,356 @@ import (
 	"dmarro89.github.com/hnsw-go/structs"
 )
 
-type BulkBuildConfig struct { Workers int; BatchSize int; EfConstruction int }
-func DefaultBulkBuildConfig() BulkBuildConfig { workers:=runtime.GOMAXPROCS(0);if workers<1{workers=1};return BulkBuildConfig{Workers:workers,BatchSize:max(32,workers*16)} }
-type insertionProposal struct{id int;level int;neighbors [][]int}
-type proposalJob struct{idx int;snapshotNodes []*structs.Node;snapshotEntry *structs.Node;vector []float32;id,level int}
-type proposalResult struct{idx int;proposal insertionProposal}
-type proposalWorkerPool struct{jobs chan proposalJob;results chan proposalResult;wg sync.WaitGroup}
-func newProposalWorkerPool(h *HNSW,workers,batchSize,efConstruction,initialVisited int)*proposalWorkerPool{p:=&proposalWorkerPool{jobs:make(chan proposalJob,batchSize),results:make(chan proposalResult,batchSize)};for range workers{p.wg.Add(1);go func(){defer p.wg.Done();ctx:=newSearchContext(max(initialVisited,efConstruction));rb:=make([]int,0,efConstruction);eb:=make([]int,0,efConstruction);for j:=range p.jobs{pr,nr,ne:=h.computeInsertionProposal(j.snapshotNodes,j.snapshotEntry,j.vector,j.id,j.level,efConstruction,ctx,rb,eb);rb,eb=nr,ne;p.results<-proposalResult{j.idx,pr}}}()};return p}
-func(p *proposalWorkerPool)compute(nodes []*structs.Node,entry *structs.Node,vectors [][]float32,levels []int,startID int)[]insertionProposal{out:=make([]insertionProposal,len(vectors));for i:=range vectors{p.jobs<-proposalJob{i,nodes,entry,vectors[i],startID+i,levels[i]}};for range vectors{r:=<-p.results;out[r.idx]=r.proposal};return out}
-func(p *proposalWorkerPool)close(){close(p.jobs);p.wg.Wait()}
-
-func(h *HNSW)BuildParallel(vectors [][]float32,cfg BulkBuildConfig)error{
-	if len(vectors)==0{return nil};if cfg.Workers<=0{cfg.Workers=runtime.GOMAXPROCS(0);if cfg.Workers<1{cfg.Workers=1}};if cfg.BatchSize<=0{cfg.BatchSize=max(32,cfg.Workers*16)};if cfg.EfConstruction<=0{cfg.EfConstruction=h.EfConstruction};if cfg.EfConstruction<=0{return errors.New("EfConstruction must be positive")};for i,v:=range vectors{if len(v)==0{return errors.New("vector cannot be empty at batch index "+itoa(i))}}
-	h.mutex.Lock();defer h.mutex.Unlock();if cfg.BatchSize==1{old:=h.EfConstruction;h.EfConstruction=cfg.EfConstruction;defer func(){h.EfConstruction=old}();id:=len(h.Nodes);h.ensureNodeCapacity(id+len(vectors));h.ensureVisitedCapacity(id+len(vectors)-1);buf:=make([]int,0,h.EfConstruction);for _,v:=range vectors{buf=h.insertLocked(v,id,buf);id++};return nil}
-	nextID:=len(h.Nodes);h.ensureNodeCapacity(nextID+len(vectors));h.ensureVisitedCapacity(nextID+len(vectors)-1);levels:=make([]int,len(vectors));for i:=range vectors{levels[i]=h.RandomLevel()};start:=0;previousScratch:=make([]int,0,max(h.Mmax,h.Mmax0)+1);if h.EntryPoint==nil{first:=insertionProposal{id:nextID,level:levels[0],neighbors:make([][]int,levels[0]+1)};previousScratch=h.applyInsertionProposalScratch(vectors[0],first,previousScratch);nextID++;start=1};if start>=len(vectors){return nil};wc:=min(cfg.Workers,min(cfg.BatchSize,len(vectors)-start));workers:=newProposalWorkerPool(h,wc,cfg.BatchSize,cfg.EfConstruction,max(len(h.Nodes),cfg.EfConstruction));defer workers.close();for bs:=start;bs<len(vectors);bs+=cfg.BatchSize{be:=min(bs+cfg.BatchSize,len(vectors));bv:=vectors[bs:be];proposals:=workers.compute(h.Nodes,h.EntryPoint,bv,levels[bs:be],nextID);for i,p:=range proposals{previousScratch=h.applyInsertionProposalScratch(bv[i],p,previousScratch)};nextID+=len(bv)};return nil
+// BulkBuildConfig configures the dedicated parallel bulk builder.
+type BulkBuildConfig struct {
+	Workers        int
+	BatchSize      int
+	EfConstruction int
 }
-func(h *HNSW)computeInsertionProposal(nodes []*structs.Node,entry *structs.Node,vector []float32,id,level,ef int,ctx *searchContext,rb,eb []int)(insertionProposal,[]int,[]int){p:=insertionProposal{id:id,level:level,neighbors:make([][]int,level+1)};if entry==nil{return p,rb[:0],eb[:0]};ep:=entry;eb=append(eb[:0],ep.ID);top:=ep.Level;for lc:=top;lc>level;lc--{ne:=greedySearchLayerNodes(vector,ep,lc,nodes,h.DistanceFunc);if ne==nil{break};ep=ne;eb=append(eb[:0],ep.ID)};for lc:=min(top,level);lc>=0;lc--{nearest:=searchLayerWithEntriesBufferContext(ctx,nodes,h.DistanceFunc,vector,eb,ef,lc,rb);n:=min(len(nearest),h.M);if n>0{p.neighbors[lc]=append(p.neighbors[lc][:0],nearest[:n]...);eb=append(eb[:0],nearest...);rb=nearest[:0]}else{p.neighbors[lc]=p.neighbors[lc][:0];eb=eb[:0];rb=rb[:0]}};return p,rb,eb}
-func(h *HNSW)applyInsertionProposal(vector []float32,p insertionProposal){n:=h.appendNode(p.id,vector,p.level);if h.EntryPoint==nil{h.EntryPoint=n;return};for l:=min(p.level,len(p.neighbors)-1);l>=0;l--{m:=h.Mmax;if l==0{m=h.Mmax0};h.updateBidirectionalConnectionsBuilder(n,p.neighbors[l],l,m)};if p.level>h.EntryPoint.Level{h.EntryPoint=n}}
-func(h *HNSW)updateBidirectionalConnectionsBuilder(q *structs.Node,neighbors []int,level,maxConn int){q.Neighbors[level]=q.Neighbors[level][:0];for _,id:=range neighbors{neighbor:=h.Nodes[id];if level>=len(neighbor.Neighbors){continue};accepted:=false;if len(neighbor.Neighbors[level])+1<=maxConn{l:=len(neighbor.Neighbors[level]);if l<cap(neighbor.Neighbors[level]){neighbor.Neighbors[level]=append(neighbor.Neighbors[level],q.ID)}else{nn:=make([]int,l+1,l+2);copy(nn,neighbor.Neighbors[level]);nn[l]=q.ID;neighbor.Neighbors[level]=nn};accepted=true}else{previous:=append([]int(nil),neighbor.Neighbors[level]...);c:=h.selectClosestNeighborIDs(neighbor,neighbor.Neighbors[level],q.ID,maxConn);neighbor.Neighbors[level]=neighbor.Neighbors[level][:len(c)];copy(neighbor.Neighbors[level],c);accepted=containsNeighborID(neighbor.Neighbors[level],q.ID);for _,d:=range previous{if containsNeighborID(neighbor.Neighbors[level],d){continue};dn:=h.Nodes[d];if level>=len(dn.Neighbors){continue};dn.Neighbors[level]=removeNeighborID(dn.Neighbors[level],neighbor.ID)}};if accepted{q.Neighbors[level]=append(q.Neighbors[level],id)}}}
-func itoa(n int)string{if n==0{return"0"};var b[20]byte;i:=len(b);for n>0{i--;b[i]=byte('0'+n%10);n/=10};return string(b[i:])}
+
+// DefaultBulkBuildConfig returns a conservative default for parallel bulk builds.
+func DefaultBulkBuildConfig() BulkBuildConfig {
+	workers := runtime.GOMAXPROCS(0)
+	if workers < 1 {
+		workers = 1
+	}
+	return BulkBuildConfig{
+		Workers:   workers,
+		BatchSize: max(32, workers*16),
+	}
+}
+
+type insertionProposal struct {
+	id        int
+	level     int
+	neighbors [][]int
+}
+
+type proposalJob struct {
+	idx           int
+	snapshotNodes []*structs.Node
+	snapshotEntry *structs.Node
+	vector        []float32
+	id            int
+	level         int
+}
+
+type proposalResult struct {
+	idx      int
+	proposal insertionProposal
+}
+
+// proposalWorkerPool owns the per-worker search scratch for the whole build.
+// Keeping workers alive across batches prevents rebuilding visited-ID arrays
+// proportional to the current graph size for every batch.
+type proposalWorkerPool struct {
+	jobs    chan proposalJob
+	results chan proposalResult
+	wg      sync.WaitGroup
+}
+
+func newProposalWorkerPool(h *HNSW, workers, batchSize, efConstruction, initialVisited int) *proposalWorkerPool {
+	pool := &proposalWorkerPool{
+		jobs:    make(chan proposalJob, batchSize),
+		results: make(chan proposalResult, batchSize),
+	}
+
+	for worker := 0; worker < workers; worker++ {
+		pool.wg.Add(1)
+		go func() {
+			defer pool.wg.Done()
+
+			ctx := newSearchContext(max(initialVisited, efConstruction))
+			searchResultsBuf := make([]int, 0, efConstruction)
+			entryPointsBuf := make([]int, 0, efConstruction)
+
+			for job := range pool.jobs {
+				proposal, nextResultsBuf, nextEntryPointsBuf := h.computeInsertionProposal(
+					job.snapshotNodes,
+					job.snapshotEntry,
+					job.vector,
+					job.id,
+					job.level,
+					efConstruction,
+					ctx,
+					searchResultsBuf,
+					entryPointsBuf,
+				)
+				searchResultsBuf = nextResultsBuf
+				entryPointsBuf = nextEntryPointsBuf
+				pool.results <- proposalResult{idx: job.idx, proposal: proposal}
+			}
+		}()
+	}
+
+	return pool
+}
+
+func (p *proposalWorkerPool) compute(
+	snapshotNodes []*structs.Node,
+	snapshotEntry *structs.Node,
+	vectors [][]float32,
+	levels []int,
+	startID int,
+) []insertionProposal {
+	proposals := make([]insertionProposal, len(vectors))
+
+	for i := range vectors {
+		p.jobs <- proposalJob{
+			idx:           i,
+			snapshotNodes: snapshotNodes,
+			snapshotEntry: snapshotEntry,
+			vector:        vectors[i],
+			id:            startID + i,
+			level:         levels[i],
+		}
+	}
+
+	for range vectors {
+		result := <-p.results
+		proposals[result.idx] = result.proposal
+	}
+
+	return proposals
+}
+
+func (p *proposalWorkerPool) close() {
+	close(p.jobs)
+	p.wg.Wait()
+}
+
+// BuildParallel appends vectors using a dedicated parallel bulk-construction path.
+//
+// The expensive search phase runs in parallel on a read-only snapshot of the graph.
+// Applying the proposed connections remains serial and deterministic, preserving
+// graph invariants while still reducing total build time on multicore machines.
+func (h *HNSW) BuildParallel(vectors [][]float32, cfg BulkBuildConfig) error {
+	if len(vectors) == 0 {
+		return nil
+	}
+
+	if cfg.Workers <= 0 {
+		cfg.Workers = runtime.GOMAXPROCS(0)
+		if cfg.Workers < 1 {
+			cfg.Workers = 1
+		}
+	}
+	if cfg.BatchSize <= 0 {
+		cfg.BatchSize = max(32, cfg.Workers*16)
+	}
+	if cfg.EfConstruction <= 0 {
+		cfg.EfConstruction = h.EfConstruction
+	}
+	if cfg.EfConstruction <= 0 {
+		return errors.New("EfConstruction must be positive")
+	}
+
+	for i, vector := range vectors {
+		if len(vector) == 0 {
+			return errors.New("vector cannot be empty at batch index " + itoa(i))
+		}
+	}
+
+	h.mutex.Lock()
+	defer h.mutex.Unlock()
+
+	if cfg.BatchSize == 1 {
+		oldEfConstruction := h.EfConstruction
+		h.EfConstruction = cfg.EfConstruction
+		defer func() {
+			h.EfConstruction = oldEfConstruction
+		}()
+
+		nextID := len(h.Nodes)
+		h.ensureNodeCapacity(nextID + len(vectors))
+		h.ensureVisitedCapacity(nextID + len(vectors) - 1)
+		searchResultsBuf := make([]int, 0, h.EfConstruction)
+		for _, vector := range vectors {
+			searchResultsBuf = h.insertLocked(vector, nextID, searchResultsBuf)
+			nextID++
+		}
+		return nil
+	}
+
+	nextID := len(h.Nodes)
+	h.ensureNodeCapacity(nextID + len(vectors))
+	h.ensureVisitedCapacity(nextID + len(vectors) - 1)
+
+	levels := make([]int, len(vectors))
+	for i := range vectors {
+		levels[i] = h.RandomLevel()
+	}
+
+	start := 0
+	previousScratch := make([]int, 0, max(h.Mmax, h.Mmax0)+1)
+	if h.EntryPoint == nil {
+		first := insertionProposal{
+			id:        nextID,
+			level:     levels[0],
+			neighbors: make([][]int, levels[0]+1),
+		}
+		previousScratch = h.applyInsertionProposalScratch(vectors[0], first, previousScratch)
+		nextID++
+		start = 1
+	}
+
+	if start >= len(vectors) {
+		return nil
+	}
+
+	workerCount := min(cfg.Workers, min(cfg.BatchSize, len(vectors)-start))
+	workers := newProposalWorkerPool(
+		h,
+		workerCount,
+		cfg.BatchSize,
+		cfg.EfConstruction,
+		max(len(h.Nodes), cfg.EfConstruction),
+	)
+	defer workers.close()
+
+	for batchStart := start; batchStart < len(vectors); batchStart += cfg.BatchSize {
+		batchEnd := min(batchStart+cfg.BatchSize, len(vectors))
+		snapshotNodes := h.Nodes
+		snapshotEntry := h.EntryPoint
+
+		batchVectors := vectors[batchStart:batchEnd]
+		batchLevels := levels[batchStart:batchEnd]
+		proposals := workers.compute(snapshotNodes, snapshotEntry, batchVectors, batchLevels, nextID)
+		for i, proposal := range proposals {
+			previousScratch = h.applyInsertionProposalScratch(batchVectors[i], proposal, previousScratch)
+		}
+		nextID += len(batchVectors)
+	}
+
+	return nil
+}
+
+func (h *HNSW) computeInsertionProposal(
+	snapshotNodes []*structs.Node,
+	snapshotEntry *structs.Node,
+	vector []float32,
+	id, level, efConstruction int,
+	ctx *searchContext,
+	searchResultsBuf, entryPointsBuf []int,
+) (insertionProposal, []int, []int) {
+	proposal := insertionProposal{
+		id:        id,
+		level:     level,
+		neighbors: make([][]int, level+1),
+	}
+
+	if snapshotEntry == nil {
+		return proposal, searchResultsBuf[:0], entryPointsBuf[:0]
+	}
+
+	entry := snapshotEntry
+	entryPointsBuf = append(entryPointsBuf[:0], entry.ID)
+	topLevel := entry.Level
+
+	for lc := topLevel; lc > level; lc-- {
+		newEntry := greedySearchLayerNodes(vector, entry, lc, snapshotNodes, h.DistanceFunc)
+		if newEntry == nil {
+			break
+		}
+		entry = newEntry
+		entryPointsBuf = append(entryPointsBuf[:0], entry.ID)
+	}
+
+	maxLayer := min(topLevel, level)
+	for lc := maxLayer; lc >= 0; lc-- {
+		nearest := searchLayerWithEntriesBufferContext(ctx, snapshotNodes, h.DistanceFunc, vector, entryPointsBuf, efConstruction, lc, searchResultsBuf)
+		neighborCount := min(len(nearest), h.M)
+		if neighborCount > 0 {
+			proposal.neighbors[lc] = append(proposal.neighbors[lc][:0], nearest[:neighborCount]...)
+			entryPointsBuf = append(entryPointsBuf[:0], nearest...)
+			searchResultsBuf = nearest[:0]
+		} else {
+			proposal.neighbors[lc] = proposal.neighbors[lc][:0]
+			entryPointsBuf = entryPointsBuf[:0]
+			searchResultsBuf = searchResultsBuf[:0]
+		}
+	}
+
+	return proposal, searchResultsBuf, entryPointsBuf
+}
+
+func (h *HNSW) applyInsertionProposal(vector []float32, proposal insertionProposal) {
+	newNode := h.appendNode(proposal.id, vector, proposal.level)
+
+	if h.EntryPoint == nil {
+		h.EntryPoint = newNode
+		return
+	}
+
+	for level := min(proposal.level, len(proposal.neighbors)-1); level >= 0; level-- {
+		maxConn := h.Mmax
+		if level == 0 {
+			maxConn = h.Mmax0
+		}
+		h.updateBidirectionalConnectionsBuilder(newNode, proposal.neighbors[level], level, maxConn)
+	}
+
+	if proposal.level > h.EntryPoint.Level {
+		h.EntryPoint = newNode
+	}
+}
+
+func (h *HNSW) updateBidirectionalConnectionsBuilder(q *structs.Node, neighbors []int, level int, maxConn int) {
+	q.Neighbors[level] = q.Neighbors[level][:0]
+
+	for _, neighborID := range neighbors {
+		neighbor := h.Nodes[neighborID]
+		if level >= len(neighbor.Neighbors) {
+			continue
+		}
+
+		accepted := false
+		if len(neighbor.Neighbors[level])+1 <= maxConn {
+			currentLen := len(neighbor.Neighbors[level])
+			if currentLen < cap(neighbor.Neighbors[level]) {
+				neighbor.Neighbors[level] = append(neighbor.Neighbors[level], q.ID)
+			} else {
+				newNeighbors := make([]int, currentLen+1, currentLen+2)
+				copy(newNeighbors, neighbor.Neighbors[level])
+				newNeighbors[currentLen] = q.ID
+				neighbor.Neighbors[level] = newNeighbors
+			}
+			accepted = true
+		} else {
+			previous := append([]int(nil), neighbor.Neighbors[level]...)
+			candidates := h.selectClosestNeighborIDs(neighbor, neighbor.Neighbors[level], q.ID, maxConn)
+			neighbor.Neighbors[level] = neighbor.Neighbors[level][:len(candidates)]
+			copy(neighbor.Neighbors[level], candidates)
+			accepted = containsNeighborID(neighbor.Neighbors[level], q.ID)
+
+			for _, droppedID := range previous {
+				if containsNeighborID(neighbor.Neighbors[level], droppedID) {
+					continue
+				}
+				dropped := h.Nodes[droppedID]
+				if level >= len(dropped.Neighbors) {
+					continue
+				}
+				dropped.Neighbors[level] = removeNeighborID(dropped.Neighbors[level], neighbor.ID)
+			}
+		}
+
+		if accepted {
+			q.Neighbors[level] = append(q.Neighbors[level], neighborID)
+		}
+	}
+}
+
+func itoa(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	var buf [20]byte
+	i := len(buf)
+	for n > 0 {
+		i--
+		buf[i] = byte('0' + n%10)
+		n /= 10
+	}
+	return string(buf[i:])
+}
