@@ -1,0 +1,44 @@
+name: Parallel 4v8 profiling
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/parallel-4v8-profile.yml'
+  workflow_dispatch:
+
+jobs:
+  profile:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: CPU and scheduler profiles at 4 vs 8 workers
+        shell: bash
+        run: |
+          set -euo pipefail
+          for ef in 64 200; do
+            for workers in 4 8; do
+              echo "=== efC=${ef} workers=${workers} ===" | tee -a parallel-profile.txt
+              GOMAXPROCS=${workers} go test ./benchmarks -run '^$' \
+                -bench "^BenchmarkParallelBuildProfile/efc${ef}/workers${workers}$" \
+                -benchtime=1x -count=1 -cpuprofile="cpu-ef${ef}-w${workers}.pprof" \
+                -mutexprofile="mutex-ef${ef}-w${workers}.pprof" \
+                -blockprofile="block-ef${ef}-w${workers}.pprof" -benchmem | tee -a parallel-profile.txt
+              go tool pprof -top -nodecount=30 "cpu-ef${ef}-w${workers}.pprof" > "cpu-ef${ef}-w${workers}.txt"
+              go tool pprof -top -nodecount=30 "mutex-ef${ef}-w${workers}.pprof" > "mutex-ef${ef}-w${workers}.txt"
+              go tool pprof -top -nodecount=30 "block-ef${ef}-w${workers}.pprof" > "block-ef${ef}-w${workers}.txt"
+            done
+          done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: parallel-4v8-profile-${{ github.run_id }}
+          path: |
+            parallel-profile.txt
+            *.pprof
+            cpu-*.txt
+            mutex-*.txt
+            block-*.txt
