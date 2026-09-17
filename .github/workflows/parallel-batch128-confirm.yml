@@ -1,0 +1,36 @@
+name: Parallel batch128 confirmation
+
+on:
+  pull_request:
+    paths:
+      - 'benchmarks/parallel_batch_size_test.go'
+      - 'benchmarks/parallel_batch_quality_test.go'
+      - '.github/workflows/parallel-batch128-confirm.yml'
+  workflow_dispatch:
+
+jobs:
+  confirm:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Repeated 100k performance
+        shell: bash
+        run: |
+          set -euo pipefail
+          GOMAXPROCS=4 go test ./benchmarks -run '^$' -bench '^BenchmarkParallelBatchSize$' -benchtime=1x -count=3 -benchmem | tee parallel-batch-confirm.txt
+      - name: Recall quality
+        shell: bash
+        run: |
+          set -euo pipefail
+          GOMAXPROCS=4 go test ./benchmarks -run '^TestParallelBatchSizeRecall$' -count=1 -v | tee parallel-batch-recall.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: parallel-batch128-confirm-${{ github.run_id }}
+          path: |
+            parallel-batch-confirm.txt
+            parallel-batch-recall.txt
