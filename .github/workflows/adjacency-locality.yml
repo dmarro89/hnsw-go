@@ -1,0 +1,26 @@
+name: Adjacency locality evidence
+on:
+  pull_request:
+    paths:
+      - 'benchmarks/adjacency_iteration_test.go'
+      - '.github/workflows/adjacency-locality.yml'
+  workflow_dispatch:
+jobs:
+  bench:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Compare adjacency layouts
+        shell: bash
+        run: |
+          set -euo pipefail
+          GOMAXPROCS=1 go test ./benchmarks -run '^$' -bench '^BenchmarkAdjacencyIteration' -benchtime=2s -count=5 -benchmem | tee adjacency-locality.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: adjacency-locality-${{ github.run_id }}
+          path: adjacency-locality.txt
