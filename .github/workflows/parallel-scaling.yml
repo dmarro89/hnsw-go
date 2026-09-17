@@ -1,0 +1,27 @@
+name: Parallel build scaling
+
+on:
+  pull_request:
+    paths:
+      - 'benchmarks/parallel_scaling_test.go'
+      - '.github/workflows/parallel-scaling.yml'
+  workflow_dispatch:
+
+jobs:
+  scaling:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Parallel scaling 100k x 128d
+        shell: bash
+        run: |
+          set -o pipefail
+          go test ./benchmarks -run '^$' -bench '^BenchmarkParallelBuildScaling$' -benchtime=1x -count=1 -benchmem | tee parallel-scaling.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: parallel-scaling-${{ github.run_id }}
+          path: parallel-scaling.txt
