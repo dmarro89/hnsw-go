@@ -23,6 +23,16 @@ func (h *MaxHeap) Push(n NodeHeap) {
 	h.siftUp(len(h.nodes) - 1)
 }
 
+// ReplaceTop replaces the maximum element and restores the heap property.
+// The caller must ensure the heap is non-empty and n is no larger than the
+// current root; this is the bounded-nearest-set insertion case.
+func (h *MaxHeap) ReplaceTop(n NodeHeap) NodeHeap {
+	old := h.nodes[0]
+	h.nodes[0] = n
+	h.siftDown(0)
+	return old
+}
+
 // Pop removes and returns the element with the maximum value.
 func (h *MaxHeap) Pop() NodeHeap {
 	if len(h.nodes) == 0 {
