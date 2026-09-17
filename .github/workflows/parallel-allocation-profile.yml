@@ -1,0 +1,35 @@
+name: Parallel allocation evidence
+on:
+  pull_request:
+    paths:
+      - 'benchmarks/parallel_allocation_profile_test.go'
+      - '.github/workflows/parallel-allocation-profile.yml'
+jobs:
+  profile:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      GOMAXPROCS: 4
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Attribute parallel allocations
+        shell: bash
+        run: |
+          set -euo pipefail
+          for ef in 64 200; do
+            go test ./benchmarks -run '^$' -bench "^BenchmarkParallelAllocationProfile/efc${ef}$" -benchtime=1x -count=1 -benchmem -memprofile="heap-ef${ef}.pprof" | tee "bench-ef${ef}.txt"
+            go tool pprof -top -alloc_objects -nodecount=30 "heap-ef${ef}.pprof" > "alloc-objects-ef${ef}.txt"
+            go tool pprof -top -alloc_space -nodecount=30 "heap-ef${ef}.pprof" > "alloc-space-ef${ef}.txt"
+          done
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: parallel-allocation-${{ github.run_id }}
+          path: |
+            bench-*.txt
+            alloc-*.txt
+            heap-*.pprof
