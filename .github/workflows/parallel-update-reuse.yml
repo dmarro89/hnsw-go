@@ -1,0 +1,27 @@
+name: Parallel update reuse evidence
+on:
+  pull_request:
+    paths:
+      - 'hnsw/bulk_update_reuse_test.go'
+      - '.github/workflows/parallel-update-reuse.yml'
+jobs:
+  bench:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    env:
+      GOMAXPROCS: 1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Measure previous-neighbor scratch reuse
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test ./hnsw -run '^$' -bench '^BenchmarkPreviousNeighborScratch$' -benchtime=2s -count=5 -benchmem | tee parallel-update-reuse.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: parallel-update-reuse-${{ github.run_id }}
+          path: parallel-update-reuse.txt
