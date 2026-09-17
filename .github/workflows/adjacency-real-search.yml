@@ -1,0 +1,27 @@
+name: Adjacency real-search experiment
+on:
+  pull_request:
+    paths:
+      - 'hnsw/adjacency_arena_experiment*'
+      - '.github/workflows/adjacency-real-search.yml'
+jobs:
+  bench:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      GOMAXPROCS: 1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Compare real search expansion
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test ./hnsw -run '^$' -bench '^BenchmarkAdjacencyArenaRealSearch$' -benchtime=2s -count=5 -benchmem | tee adjacency-real-search.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: adjacency-real-search-${{ github.run_id }}
+          path: adjacency-real-search.txt
