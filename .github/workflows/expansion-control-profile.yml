@@ -1,0 +1,28 @@
+name: Expansion control evidence
+on:
+  pull_request:
+    paths:
+      - 'hnsw/expansion_control_profile_test.go'
+      - '.github/workflows/expansion-control-profile.yml'
+jobs:
+  profile:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    env:
+      GOMAXPROCS: 1
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: Profile expansion control flow
+        shell: bash
+        run: |
+          set -euo pipefail
+          go test ./hnsw -run '^TestProfileExpansionControlFlow$' -count=1 -v | tee expansion-control.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: expansion-control-${{ github.run_id }}
+          path: expansion-control.txt
