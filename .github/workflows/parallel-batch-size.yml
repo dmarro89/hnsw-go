@@ -1,0 +1,28 @@
+name: Parallel batch-size evidence
+
+on:
+  pull_request:
+    paths:
+      - 'benchmarks/parallel_batch_size_test.go'
+      - '.github/workflows/parallel-batch-size.yml'
+  workflow_dispatch:
+
+jobs:
+  batch-size:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - name: 100k x 128d batch-size sweep at four workers
+        shell: bash
+        run: |
+          set -euo pipefail
+          GOMAXPROCS=4 go test ./benchmarks -run '^$' -bench '^BenchmarkParallelBatchSize$' -benchtime=1x -count=1 -benchmem | tee parallel-batch-size.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: parallel-batch-size-${{ github.run_id }}
+          path: parallel-batch-size.txt
