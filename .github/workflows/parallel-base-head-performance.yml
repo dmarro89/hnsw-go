@@ -1,0 +1,59 @@
+name: Parallel base-head performance
+
+on:
+  pull_request:
+    branches: ["main"]
+    paths:
+      - "hnsw/**"
+      - "benchmarks/crosslang/parallel_base_head_paired.py"
+      - ".github/workflows/parallel-base-head-performance.yml"
+  workflow_dispatch:
+
+jobs:
+  paired:
+    name: 100k parallel ABBA/BAAB
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      GOMAXPROCS: 4
+      BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - name: Generate deterministic 100k x 128d dataset
+        run: |
+          python - <<'PY'
+          import random, struct
+          from pathlib import Path
+          p=Path('.artifacts/paired-vectors-100000-128.f32'); p.parent.mkdir(exist_ok=True)
+          r=random.Random(20260913+100000)
+          with p.open('wb') as f:
+              for _ in range(100000*128): f.write(struct.pack('<f',r.random()))
+          PY
+      - name: Run paired 4-worker gate
+        shell: bash
+        run: |
+          set -euo pipefail
+          python benchmarks/crosslang/parallel_base_head_paired.py | tee .artifacts/parallel-base-head.md
+      - name: Publish results
+        if: always()
+        run: |
+          if [[ -f .artifacts/parallel-base-head.md ]]; then cat .artifacts/parallel-base-head.md >> "$GITHUB_STEP_SUMMARY"; fi
+      - name: Upload results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: parallel-base-head-${{ github.run_id }}
+          path: |
+            .artifacts/parallel-base-head.md
+            .artifacts/paired-results.csv
+          if-no-files-found: warn

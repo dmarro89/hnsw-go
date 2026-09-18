@@ -189,13 +189,14 @@ func (h *HNSW) BuildParallel(vectors [][]float32, cfg BulkBuildConfig) error {
 	}
 
 	start := 0
+	previousScratch := make([]int, 0, max(h.Mmax, h.Mmax0)+1)
 	if h.EntryPoint == nil {
 		first := insertionProposal{
 			id:        nextID,
 			level:     levels[0],
 			neighbors: make([][]int, levels[0]+1),
 		}
-		h.applyInsertionProposal(vectors[0], first)
+		previousScratch = h.applyInsertionProposalScratch(vectors[0], first, previousScratch)
 		nextID++
 		start = 1
 	}
@@ -223,7 +224,7 @@ func (h *HNSW) BuildParallel(vectors [][]float32, cfg BulkBuildConfig) error {
 		batchLevels := levels[batchStart:batchEnd]
 		proposals := workers.compute(snapshotNodes, snapshotEntry, batchVectors, batchLevels, nextID)
 		for i, proposal := range proposals {
-			h.applyInsertionProposal(batchVectors[i], proposal)
+			previousScratch = h.applyInsertionProposalScratch(batchVectors[i], proposal, previousScratch)
 		}
 		nextID += len(batchVectors)
 	}
