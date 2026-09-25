@@ -1,0 +1,122 @@
+name: Go 1.27 SIMD re-evaluation
+
+on:
+  pull_request:
+    branches: ["main"]
+    paths:
+      - "go.mod"
+      - "hnsw/**"
+      - "benchmarks/distance_kernel_test.go"
+      - "benchmarks/distance_kernel_simd_test.go"
+      - "benchmarks/distance_kernel_portable_simd_test.go"
+      - ".github/workflows/go127-simd.yml"
+  workflow_dispatch:
+
+jobs:
+  distance-kernel:
+    name: Go 1.26 vs 1.27 SIMD kernel
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out PR head
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve base and prepare worktree
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          if [[ -z "$BASE_SHA" ]]; then BASE_SHA="origin/main"; fi
+          git worktree add --detach ../hnsw-go-base "$BASE_SHA"
+          mkdir -p .artifacts
+
+      - name: Set up Go 1.26.8 baseline
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.8"
+          cache: false
+
+      - name: Benchmark Go 1.26 baseline
+        working-directory: ../hnsw-go-base
+        shell: bash
+        env:
+          GOEXPERIMENT: simd
+          GOMAXPROCS: 1
+        run: |
+          set -euo pipefail
+          go version
+          go test ./benchmarks -run '^TestDistanceKernelSIMDAgrees$' -count=1
+          go test ./benchmarks -run '^$' -bench '^BenchmarkDistanceKernelSIMDRandomAccess$' -benchmem -benchtime=3s -count=5 | tee ../hnsw-go/.artifacts/go126-random.txt
+
+      - name: Set up Go 1.27.1
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.27.1"
+          cache: false
+
+      - name: Benchmark Go 1.27 arch-specific and portable SIMD
+        shell: bash
+        env:
+          GOEXPERIMENT: simd
+          GOMAXPROCS: 1
+        run: |
+          set -euo pipefail
+          go version
+          go test ./benchmarks -run '^(TestDistanceKernelSIMDAgrees|TestDistanceKernelPortableSIMDAgrees)$' -count=1
+          go test ./benchmarks -run '^$' -bench '^BenchmarkDistanceKernelSIMDRandomAccess$' -benchmem -benchtime=3s -count=5 | tee .artifacts/go127-arch-random.txt
+          go test ./benchmarks -run '^$' -bench '^BenchmarkDistanceKernelPortableSIMDRandomAccess$' -benchmem -benchtime=3s -count=5 | tee .artifacts/go127-portable-random.txt
+
+      - name: Summarize medians
+        if: always()
+        shell: bash
+        run: |
+          python - <<'PY' | tee .artifacts/summary.md
+          import re, statistics
+          from pathlib import Path
+
+          files = {
+              'go126': Path('.artifacts/go126-random.txt'),
+              'go127_arch': Path('.artifacts/go127-arch-random.txt'),
+              'go127_portable': Path('.artifacts/go127-portable-random.txt'),
+          }
+          vals = {}
+          for label, path in files.items():
+              if not path.exists():
+                  continue
+              for line in path.read_text().splitlines():
+                  m = re.search(r'Benchmark\S+/(production_scalar4|simd256_fma|portable_simd)-\d+\s+\d+\s+([0-9.]+)\s+ns/op', line)
+                  if m:
+                      vals.setdefault((label, m.group(1)), []).append(float(m.group(2)))
+
+          print('## Go 1.27 SIMD re-evaluation')
+          print()
+          print('| Toolchain | Kernel | Median ns/op | Reps |')
+          print('| :--- | :--- | ---: | ---: |')
+          for key in [('go126','production_scalar4'),('go126','simd256_fma'),('go127_arch','production_scalar4'),('go127_arch','simd256_fma'),('go127_portable','production_scalar4'),('go127_portable','portable_simd')]:
+              xs = vals.get(key, [])
+              if xs:
+                  print(f'| {key[0]} | {key[1]} | {statistics.median(xs):.2f} | {len(xs)} |')
+
+          def med(k):
+              xs=vals.get(k,[]); return statistics.median(xs) if xs else None
+          s26=med(('go126','production_scalar4'))
+          s27=med(('go127_portable','production_scalar4'))
+          p27=med(('go127_portable','portable_simd'))
+          a26=med(('go126','simd256_fma'))
+          a27=med(('go127_arch','simd256_fma'))
+          print()
+          if s26 and s27: print(f'- Go 1.27 scalar vs Go 1.26 scalar: **{s26/s27:.3f}x**')
+          if p27 and s27: print(f'- Go 1.27 portable SIMD vs Go 1.27 scalar: **{s27/p27:.3f}x**')
+          if a26 and a27: print(f'- Go 1.27 archsimd256 vs Go 1.26 archsimd256: **{a26/a27:.3f}x**')
+          PY
+          cat .artifacts/summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload benchmark evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: go127-simd-${{ github.run_id }}
+          path: .artifacts
+          if-no-files-found: error
