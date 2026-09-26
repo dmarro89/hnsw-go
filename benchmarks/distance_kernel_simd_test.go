@@ -16,13 +16,13 @@ func distanceSIMD128(a, b []float32) float32 {
 	var acc archsimd.Float32x4
 	i := 0
 	for ; i <= len(a)-4; i += 4 {
-		av := archsimd.LoadFloat32x4Slice(a[i:])
-		bv := archsimd.LoadFloat32x4Slice(b[i:])
+		av := archsimd.LoadFloat32x4(a[i:])
+		bv := archsimd.LoadFloat32x4(b[i:])
 		d := av.Sub(bv)
 		acc = d.MulAdd(d, acc)
 	}
 	var lanes [4]float32
-	acc.StoreSlice(lanes[:])
+	acc.Store(lanes[:])
 	sum := lanes[0] + lanes[1] + lanes[2] + lanes[3]
 	for ; i < len(a); i++ {
 		d := a[i] - b[i]
@@ -35,13 +35,13 @@ func distanceSIMD256(a, b []float32) float32 {
 	var acc archsimd.Float32x8
 	i := 0
 	for ; i <= len(a)-8; i += 8 {
-		av := archsimd.LoadFloat32x8Slice(a[i:])
-		bv := archsimd.LoadFloat32x8Slice(b[i:])
+		av := archsimd.LoadFloat32x8(a[i:])
+		bv := archsimd.LoadFloat32x8(b[i:])
 		d := av.Sub(bv)
 		acc = d.MulAdd(d, acc)
 	}
 	var lanes [8]float32
-	acc.StoreSlice(lanes[:])
+	acc.Store(lanes[:])
 	sum := lanes[0] + lanes[1] + lanes[2] + lanes[3] + lanes[4] + lanes[5] + lanes[6] + lanes[7]
 	for ; i < len(a); i++ {
 		d := a[i] - b[i]
