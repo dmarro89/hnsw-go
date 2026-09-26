@@ -105,13 +105,14 @@ jobs:
           def med(k):
               xs=vals.get(k,[]); return statistics.median(xs) if xs else None
           s26=med(('go126','production_scalar4'))
-          s27=med(('go127_portable','production_scalar4'))
+          s27=med(('go127_arch','production_scalar4'))
+          p27_scalar=med(('go127_portable','production_scalar4'))
           p27=med(('go127_portable','portable_simd'))
           a26=med(('go126','simd256_fma'))
           a27=med(('go127_arch','simd256_fma'))
           print()
-          if s26 and s27: print(f'- Go 1.27 scalar vs Go 1.26 scalar: **{s26/s27:.3f}x**')
-          if p27 and s27: print(f'- Go 1.27 portable SIMD vs Go 1.27 scalar: **{s27/p27:.3f}x**')
+          if s26 and s27: print(f'- Go 1.27 scalar vs Go 1.26 scalar (same benchmark): **{s26/s27:.3f}x**')
+          if p27 and p27_scalar: print(f'- Go 1.27 portable SIMD vs Go 1.27 scalar (same benchmark): **{p27_scalar/p27:.3f}x**')
           if a26 and a27: print(f'- Go 1.27 archsimd256 vs Go 1.26 archsimd256: **{a26/a27:.3f}x**')
           PY
           cat .artifacts/summary.md >> "$GITHUB_STEP_SUMMARY"
