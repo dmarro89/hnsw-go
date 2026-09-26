@@ -1,0 +1,175 @@
+name: Go 1.27 real HNSW comparison
+
+on:
+  pull_request:
+    branches: ["main"]
+    paths:
+      - "go.mod"
+      - ".github/workflows/go127-real-hnsw.yml"
+      - "benchmarks/crosslang/go/**"
+      - "hnsw/**"
+      - "structs/**"
+  workflow_dispatch:
+
+jobs:
+  paired-real-hnsw:
+    name: 100k serial Go 1.26 vs 1.27
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    env:
+      GOMAXPROCS: 1
+    steps:
+      - name: Check out PR head
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Prepare identical base source
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE_SHA="${{ github.event.pull_request.base.sha }}"
+          if [[ -z "$BASE_SHA" ]]; then BASE_SHA="origin/main"; fi
+          git worktree add --detach ../hnsw-go-toolchain-base "$BASE_SHA"
+          mkdir -p .artifacts
+
+      - name: Set up Go 1.26.8
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.8"
+          cache: false
+
+      - name: Build Go 1.26 benchmark binary
+        working-directory: ../hnsw-go-toolchain-base
+        shell: bash
+        env:
+          GOTOOLCHAIN: local
+        run: |
+          set -euo pipefail
+          go version
+          go build -o ../hnsw-go/go126-runner ./benchmarks/crosslang/go
+
+      - name: Set up Go 1.27.1
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.27.1"
+          cache: false
+
+      - name: Build Go 1.27 benchmark binary from identical source
+        working-directory: ../hnsw-go-toolchain-base
+        shell: bash
+        env:
+          GOTOOLCHAIN: local
+        run: |
+          set -euo pipefail
+          go version
+          go build -o ../hnsw-go/go127-runner ./benchmarks/crosslang/go
+
+      - name: Generate deterministic 100k x 128d dataset
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat > /tmp/gen_vectors.go <<'EOF'
+          package main
+          import (
+            "bufio"
+            "encoding/binary"
+            "math"
+            "math/rand/v2"
+            "os"
+          )
+          func main() {
+            f, err := os.Create(".artifacts/toolchain-vectors-100000-128.f32")
+            if err != nil { panic(err) }
+            defer f.Close()
+            w := bufio.NewWriterSize(f, 1<<20)
+            defer w.Flush()
+            rng := rand.New(rand.NewPCG(20260913+100000, 0x9e3779b97f4a7c15))
+            var b [4]byte
+            for i := 0; i < 100000*128; i++ {
+              binary.LittleEndian.PutUint32(b[:], math.Float32bits(rng.Float32()))
+              if _, err := w.Write(b[:]); err != nil { panic(err) }
+            }
+          }
+          EOF
+          GOTOOLCHAIN=local go run /tmp/gen_vectors.go
+
+      - name: Run paired ABBA and BAAB real HNSW builds
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import csv, os, statistics, subprocess
+          from pathlib import Path
+
+          root = Path.cwd()
+          data = root / '.artifacts/toolchain-vectors-100000-128.f32'
+          bins = {'go126': root/'go126-runner', 'go127': root/'go127-runner'}
+          orders = [('go126','go127','go127','go126'), ('go127','go126','go126','go127')]
+          rows = []
+          env = os.environ.copy()
+          env['GOMAXPROCS'] = '1'
+
+          for efc in (64, 200):
+              rep = 0
+              for order in orders:
+                  for toolchain in order:
+                      rep += 1
+                      out = root / f'.artifacts/{toolchain}-efc{efc}-rep{rep}.csv'
+                      subprocess.run([
+                          str(bins[toolchain]), str(data), '100000', '128', str(efc), '1', str(out)
+                      ], check=True, env=env)
+                      with out.open() as f:
+                          r = next(csv.DictReader(f))
+                      r['toolchain'] = toolchain
+                      r['rep'] = str(rep)
+                      rows.append(r)
+
+          fields = list(rows[0].keys())
+          with (root/'.artifacts/go127-real-hnsw.csv').open('w', newline='') as f:
+              w = csv.DictWriter(f, fieldnames=fields)
+              w.writeheader(); w.writerows(rows)
+
+          lines = [
+              '## Go 1.26.8 vs Go 1.27.1 — real HNSW 100k x 128d',
+              '',
+              '| efC | Go 1.26.8 median | Go 1.27.1 median | Speedup | TotalAlloc 1.26 | TotalAlloc 1.27 |',
+              '| ---: | ---: | ---: | ---: | ---: | ---: |',
+          ]
+          failed = False
+          for efc in (64, 200):
+              rs = [r for r in rows if int(r['efConstruction']) == efc]
+              a = [r for r in rs if r['toolchain'] == 'go126']
+              b = [r for r in rs if r['toolchain'] == 'go127']
+              a_s = statistics.median(float(r['seconds']) for r in a)
+              b_s = statistics.median(float(r['seconds']) for r in b)
+              a_m = statistics.median(float(r['total_alloc_mib']) for r in a)
+              b_m = statistics.median(float(r['total_alloc_mib']) for r in b)
+              speed = a_s / b_s
+              lines.append(f'| {efc} | {a_s:.3f}s | {b_s:.3f}s | **{speed:.4f}x** | {a_m:.2f} MiB | {b_m:.2f} MiB |')
+              if speed < 1.02:
+                  failed = True
+          lines += ['', 'Gate: >=1.02x median speedup at both efC64 and efC200 on the same runner/source.']
+          summary = '\n'.join(lines) + '\n'
+          (root/'.artifacts/go127-real-hnsw.md').write_text(summary)
+          print(summary)
+          if failed:
+              raise SystemExit('real-HNSW toolchain performance gate failed')
+          PY
+
+      - name: Publish results
+        if: always()
+        shell: bash
+        run: |
+          if [[ -f .artifacts/go127-real-hnsw.md ]]; then cat .artifacts/go127-real-hnsw.md >> "$GITHUB_STEP_SUMMARY"; fi
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: go127-real-hnsw-${{ github.run_id }}
+          path: |
+            .artifacts/go127-real-hnsw.md
+            .artifacts/go127-real-hnsw.csv
+          include-hidden-files: true
+          if-no-files-found: warn
