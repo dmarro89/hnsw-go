@@ -44,6 +44,7 @@ jobs:
         env:
           GOEXPERIMENT: simd
           GOMAXPROCS: 1
+          GOTOOLCHAIN: local
         run: |
           set -euo pipefail
           go version
@@ -61,6 +62,7 @@ jobs:
         env:
           GOEXPERIMENT: simd
           GOMAXPROCS: 1
+          GOTOOLCHAIN: local
         run: |
           set -euo pipefail
           go version
@@ -82,11 +84,12 @@ jobs:
               'go127_portable': Path('.artifacts/go127-portable-random.txt'),
           }
           vals = {}
+          pattern = re.compile(r'Benchmark\S+/(production_scalar4|simd256_fma|portable_simd)(?:-\d+)?\s+\d+\s+([0-9.]+)\s+ns/op')
           for label, path in files.items():
               if not path.exists():
                   continue
               for line in path.read_text().splitlines():
-                  m = re.search(r'Benchmark\S+/(production_scalar4|simd256_fma|portable_simd)-\d+\s+\d+\s+([0-9.]+)\s+ns/op', line)
+                  m = pattern.search(line)
                   if m:
                       vals.setdefault((label, m.group(1)), []).append(float(m.group(2)))
 
@@ -119,4 +122,5 @@ jobs:
         with:
           name: go127-simd-${{ github.run_id }}
           path: .artifacts
+          include-hidden-files: true
           if-no-files-found: error
