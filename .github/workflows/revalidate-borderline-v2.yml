@@ -1,0 +1,149 @@
+name: Revalidate borderline optimizations v2
+
+on:
+  push:
+    branches:
+      - bench-revalidate-borderline-v2
+  workflow_dispatch:
+
+jobs:
+  revalidate:
+    name: ${{ matrix.label }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        include:
+          - label: "PR29 heap hole siftDown"
+            head_ref: "perf-heap-hole-siftdown"
+            threads: 1
+          - label: "PR30 Euclidean specialization"
+            head_ref: "perf-arena-euclidean-specialization"
+            threads: 1
+          - label: "PR50 ReplaceTop"
+            head_ref: "bench-heap-replace-top"
+            threads: 1
+          - label: "PR61 parallel pruning scratch"
+            head_ref: "perf-parallel-update-scratch-production"
+            threads: 4
+
+    steps:
+      - name: Check out methodology harness
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Prepare base and historical head worktrees
+        shell: bash
+        env:
+          HEAD_REF: ${{ matrix.head_ref }}
+        run: |
+          set -euo pipefail
+          git fetch origin main "$HEAD_REF"
+          git worktree add --detach ../hnsw-base origin/main
+          git worktree add --detach ../hnsw-head "origin/$HEAD_REF"
+          mkdir -p .artifacts
+
+          # The historical branches predate methodology v2. Compile the exact
+          # same current runner source against each variant's production code.
+          mkdir -p ../hnsw-base/.benchmark-methodology-runner
+          mkdir -p ../hnsw-head/.benchmark-methodology-runner
+          cp benchmarks/methodology/go/main.go ../hnsw-base/.benchmark-methodology-runner/main.go
+          cp benchmarks/methodology/go/main.go ../hnsw-head/.benchmark-methodology-runner/main.go
+
+      - name: Build base and head runners
+        shell: bash
+        run: |
+          set -euo pipefail
+          (
+            cd ../hnsw-base
+            GOTOOLCHAIN=local go build -o "$GITHUB_WORKSPACE/.artifacts/base-runner" ./.benchmark-methodology-runner
+          )
+          (
+            cd ../hnsw-head
+            GOTOOLCHAIN=local go build -o "$GITHUB_WORKSPACE/.artifacts/head-runner" ./.benchmark-methodology-runner
+          )
+
+      - name: Generate deterministic 100k x 128d dataset
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import array
+          import random
+          import sys
+          from pathlib import Path
+
+          count = 100_000
+          dim = 128
+          path = Path('.artifacts/methodology-vectors-100000-128.f32')
+          rng = random.Random(20260927 + count + dim)
+          values = array.array('f', (rng.random() for _ in range(count * dim)))
+          if sys.byteorder != 'little':
+              values.byteswap()
+          with path.open('wb') as f:
+              values.tofile(f)
+          PY
+
+      - name: Run methodology v2
+        shell: bash
+        env:
+          THREADS: ${{ matrix.threads }}
+          LABEL: ${{ matrix.label }}
+          HEAD_REF: ${{ matrix.head_ref }}
+        run: |
+          set -euo pipefail
+          BASE_SHA="$(git -C ../hnsw-base rev-parse HEAD)"
+          HEAD_SHA="$(git -C ../hnsw-head rev-parse HEAD)"
+          python benchmarks/methodology/paired_hnsw.py \
+            --base-bin .artifacts/base-runner \
+            --head-bin .artifacts/head-runner \
+            --data .artifacts/methodology-vectors-100000-128.f32 \
+            --count 100000 \
+            --dim 128 \
+            --efc 64,200 \
+            --threads "$THREADS" \
+            --pairs 6 \
+            --warmups 1 \
+            --counter-pass \
+            --require-pinning \
+            --label-base "main:$BASE_SHA" \
+            --label-head "$HEAD_REF:$HEAD_SHA" \
+            --out-dir .artifacts/methodology \
+            | tee .artifacts/methodology-console.txt
+
+      - name: Publish summary
+        if: always()
+        shell: bash
+        run: |
+          if [[ -f .artifacts/methodology/summary.md ]]; then
+            {
+              echo "# ${{ matrix.label }}"
+              echo
+              cat .artifacts/methodology/summary.md
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: methodology-v2-${{ matrix.head_ref }}-${{ github.run_id }}
+          path: |
+            .artifacts/methodology
+            .artifacts/methodology-console.txt
+          include-hidden-files: true
+          if-no-files-found: error
