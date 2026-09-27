@@ -63,22 +63,32 @@ func (h *MaxHeap) siftUp(i int) {
 }
 
 // siftDown restores the heap property by moving down the tree.
+// Keep the displaced root in a local and move children up through the hole,
+// avoiding a two-element swap at every level.
 func (h *MaxHeap) siftDown(i int) {
 	n := len(h.nodes)
+	if i >= n {
+		return
+	}
+
+	item := h.nodes[i]
 	for {
 		left := 2*i + 1
-		right := 2*i + 2
-		largest := i
-		if left < n && h.nodes[left].Dist > h.nodes[largest].Dist {
-			largest = left
-		}
-		if right < n && h.nodes[right].Dist > h.nodes[largest].Dist {
-			largest = right
-		}
-		if largest == i {
+		if left >= n {
 			break
 		}
-		h.nodes[i], h.nodes[largest] = h.nodes[largest], h.nodes[i]
-		i = largest
+
+		child := left
+		right := left + 1
+		if right < n && h.nodes[right].Dist > h.nodes[left].Dist {
+			child = right
+		}
+		if h.nodes[child].Dist <= item.Dist {
+			break
+		}
+
+		h.nodes[i] = h.nodes[child]
+		i = child
 	}
+	h.nodes[i] = item
 }
