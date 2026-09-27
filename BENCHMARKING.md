@@ -162,3 +162,13 @@ Artifacts:
 - `raw.csv` - every timed sample and pair order;
 - `metadata.json` - hardware and runner fingerprint;
 - `counters.csv` - optional deterministic counter pass.
+
+## 13. Reusable GitHub Actions workflow
+
+`.github/workflows/paired-hnsw-performance.yml` is the standard CI entry point for decisive comparisons. It can be invoked manually with `workflow_dispatch` or called from an experiment workflow with `workflow_call`.
+
+It accepts base/head refs plus dataset size, dimensions, efConstruction values, worker count, pair count, warm-ups, counter-pass selection, and whether a statistical win is mandatory.
+
+The workflow deliberately copies the same methodology runner source into both git worktrees before compiling. This allows comparisons against historical refs created before methodology v2 existed while keeping the measured HNSW implementation at the exact requested base/head commits.
+
+For exploratory experiments, leave `require_win=false` and inspect the classification. Set `require_win=true` only for the final promotion gate after the experiment has already shown a credible signal.
