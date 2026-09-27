@@ -1,0 +1,23 @@
+name: Revalidate parallel scratch v2
+
+on:
+  pull_request:
+    branches: ["main"]
+    paths:
+      - "hnsw/**"
+      - ".github/workflows/revalidate-parallel-scratch-v2.yml"
+
+jobs:
+  performance:
+    uses: ./.github/workflows/paired-hnsw-performance.yml
+    with:
+      base_ref: main
+      head_ref: perf-revalidate-parallel-scratch-v2
+      count: 100000
+      dim: 128
+      efc: "64,200"
+      threads: 4
+      pairs: 6
+      warmups: 1
+      counter_pass: true
+      require_win: false
