@@ -148,10 +148,12 @@ func (h *HNSW) searchLayerArena(query []float32, entries []int, ef, level int, d
 			continue
 		}
 		d := h.DistanceFunc(query, arenaVector(arena, dim, id))
-		candidates.Push(structs.NewNodeHeap(d, id))
-		nearest.Push(structs.NewNodeHeap(d, id))
-		if nearest.Len() > ef {
-			nearest.Pop()
+		item := structs.NewNodeHeap(d, id)
+		candidates.Push(item)
+		if nearest.Len() < ef {
+			nearest.Push(item)
+		} else if d < nearest.Peek().Dist {
+			nearest.ReplaceTop(item)
 		}
 	}
 	if candidates.Len() == 0 {
@@ -175,10 +177,12 @@ func (h *HNSW) searchLayerArena(query []float32, entries []int, ef, level int, d
 			if nearest.Len() >= ef && d >= nearest.Peek().Dist {
 				continue
 			}
-			candidates.Push(structs.NewNodeHeap(d, id))
-			nearest.Push(structs.NewNodeHeap(d, id))
-			if nearest.Len() > ef {
-				nearest.Pop()
+			item := structs.NewNodeHeap(d, id)
+			candidates.Push(item)
+			if nearest.Len() < ef {
+				nearest.Push(item)
+			} else {
+				nearest.ReplaceTop(item)
 			}
 		}
 	}
