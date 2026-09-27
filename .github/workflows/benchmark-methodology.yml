@@ -1,0 +1,111 @@
+name: Benchmark methodology v2
+
+on:
+  pull_request:
+    branches: ["main"]
+    paths:
+      - "BENCHMARKING.md"
+      - "benchmarks/methodology/**"
+      - ".github/workflows/benchmark-methodology.yml"
+  workflow_dispatch:
+
+jobs:
+  methodology-smoke:
+    name: Paired methodology smoke test
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    env:
+      GOMAXPROCS: 1
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Validate Python harness
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m py_compile benchmarks/methodology/paired_hnsw.py
+          python benchmarks/methodology/test_paired_hnsw.py
+
+      - name: Build identical smoke-test runners
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p .artifacts
+          go build -o .artifacts/methodology-runner ./benchmarks/methodology/go
+          cp .artifacts/methodology-runner .artifacts/base-runner
+          cp .artifacts/methodology-runner .artifacts/head-runner
+
+      - name: Generate deterministic 10k x 128d dataset
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import array
+          import random
+          import sys
+          from pathlib import Path
+
+          path = Path('.artifacts/methodology-vectors-10000-128.f32')
+          rng = random.Random(20260927)
+          values = array.array('f', (rng.random() for _ in range(10_000 * 128)))
+          if sys.byteorder != 'little':
+              values.byteswap()
+          with path.open('wb') as f:
+              values.tofile(f)
+          PY
+
+      - name: Run pinned paired smoke test
+        shell: bash
+        run: |
+          set -euo pipefail
+          python benchmarks/methodology/paired_hnsw.py \
+            --base-bin .artifacts/base-runner \
+            --head-bin .artifacts/head-runner \
+            --data .artifacts/methodology-vectors-10000-128.f32 \
+            --count 10000 \
+            --dim 128 \
+            --efc 64 \
+            --threads 1 \
+            --pairs 3 \
+            --warmups 1 \
+            --counter-pass \
+            --require-pinning \
+            --out-dir .artifacts/methodology | tee .artifacts/methodology-console.txt
+
+      - name: Validate artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s .artifacts/methodology/summary.md
+          test -s .artifacts/methodology/raw.csv
+          test -s .artifacts/methodology/metadata.json
+          test -s .artifacts/methodology/counters.csv
+          python - <<'PY'
+          import json
+          from pathlib import Path
+          metadata = json.loads(Path('.artifacts/methodology/metadata.json').read_text())
+          assert metadata['pinned'] is True
+          assert metadata['hardware_fingerprint']
+          assert len(metadata['selected_cpus']) == 1
+          PY
+          cat .artifacts/methodology/summary.md >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload methodology evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-methodology-${{ github.run_id }}
+          path: |
+            .artifacts/methodology
+            .artifacts/methodology-console.txt
+          include-hidden-files: true
+          if-no-files-found: error
