@@ -1,0 +1,240 @@
+name: Paired HNSW performance
+
+on:
+  workflow_call:
+    inputs:
+      base_ref:
+        description: Base git ref or SHA
+        required: false
+        type: string
+        default: main
+      head_ref:
+        description: Head git ref or SHA
+        required: false
+        type: string
+        default: ""
+      count:
+        description: Number of vectors
+        required: false
+        type: number
+        default: 100000
+      dim:
+        description: Vector dimensions
+        required: false
+        type: number
+        default: 128
+      efc:
+        description: Comma-separated efConstruction values
+        required: false
+        type: string
+        default: "64,200"
+      threads:
+        description: GOMAXPROCS / build workers
+        required: false
+        type: number
+        default: 1
+      pairs:
+        description: Adjacent temporal pairs per efConstruction
+        required: false
+        type: number
+        default: 6
+      warmups:
+        description: Warm-up runs per variant and efConstruction
+        required: false
+        type: number
+        default: 1
+      counter_pass:
+        description: Run separate deterministic counter pass
+        required: false
+        type: boolean
+        default: true
+      require_win:
+        description: Fail unless every efConstruction scenario is a statistical win
+        required: false
+        type: boolean
+        default: false
+  workflow_dispatch:
+    inputs:
+      base_ref:
+        description: Base git ref or SHA
+        required: true
+        default: main
+      head_ref:
+        description: Head git ref or SHA
+        required: true
+        default: main
+      count:
+        description: Number of vectors
+        required: true
+        default: "100000"
+      dim:
+        description: Vector dimensions
+        required: true
+        default: "128"
+      efc:
+        description: Comma-separated efConstruction values
+        required: true
+        default: "64,200"
+      threads:
+        description: GOMAXPROCS / build workers
+        required: true
+        default: "1"
+      pairs:
+        description: Adjacent temporal pairs per efConstruction
+        required: true
+        default: "6"
+      warmups:
+        description: Warm-up runs per variant and efConstruction
+        required: true
+        default: "1"
+      counter_pass:
+        description: Run deterministic counter pass
+        required: true
+        type: boolean
+        default: true
+      require_win:
+        description: Require statistical win
+        required: true
+        type: boolean
+        default: false
+
+jobs:
+  paired:
+    name: Paired HNSW comparison
+    runs-on: ubuntu-24.04
+    timeout-minutes: 75
+    steps:
+      - name: Check out harness
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Resolve refs and create worktrees
+        id: refs
+        shell: bash
+        env:
+          INPUT_BASE: ${{ inputs.base_ref }}
+          INPUT_HEAD: ${{ inputs.head_ref }}
+        run: |
+          set -euo pipefail
+          BASE_REF="${INPUT_BASE:-main}"
+          HEAD_REF="$INPUT_HEAD"
+          if [[ -z "$HEAD_REF" ]]; then
+            if [[ -n "${GITHUB_HEAD_REF:-}" ]]; then
+              HEAD_REF="$GITHUB_HEAD_REF"
+            else
+              HEAD_REF="$GITHUB_SHA"
+            fi
+          fi
+          git fetch origin "$BASE_REF" "$HEAD_REF" || true
+          BASE_SHA="$(git rev-parse "$BASE_REF" 2>/dev/null || git rev-parse "origin/$BASE_REF")"
+          HEAD_SHA="$(git rev-parse "$HEAD_REF" 2>/dev/null || git rev-parse "origin/$HEAD_REF")"
+          git worktree add --detach ../hnsw-go-base "$BASE_SHA"
+          git worktree add --detach ../hnsw-go-head "$HEAD_SHA"
+          mkdir -p .artifacts
+          echo "base_sha=$BASE_SHA" >> "$GITHUB_OUTPUT"
+          echo "head_sha=$HEAD_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Build base and head methodology runners
+        shell: bash
+        run: |
+          set -euo pipefail
+          (
+            cd ../hnsw-go-base
+            GOTOOLCHAIN=local go build -o "$GITHUB_WORKSPACE/.artifacts/base-runner" ./benchmarks/methodology/go
+          )
+          (
+            cd ../hnsw-go-head
+            GOTOOLCHAIN=local go build -o "$GITHUB_WORKSPACE/.artifacts/head-runner" ./benchmarks/methodology/go
+          )
+
+      - name: Generate deterministic dataset
+        shell: bash
+        env:
+          COUNT: ${{ inputs.count }}
+          DIM: ${{ inputs.dim }}
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import array
+          import os
+          import random
+          import sys
+          from pathlib import Path
+
+          count = int(os.environ.get('COUNT') or 100000)
+          dim = int(os.environ.get('DIM') or 128)
+          path = Path(f'.artifacts/methodology-vectors-{count}-{dim}.f32')
+          rng = random.Random(20260927 + count + dim)
+          values = array.array('f', (rng.random() for _ in range(count * dim)))
+          if sys.byteorder != 'little':
+              values.byteswap()
+          with path.open('wb') as f:
+              values.tofile(f)
+          print(path)
+          PY
+
+      - name: Run paired methodology
+        shell: bash
+        env:
+          COUNT: ${{ inputs.count }}
+          DIM: ${{ inputs.dim }}
+          EFC: ${{ inputs.efc }}
+          THREADS: ${{ inputs.threads }}
+          PAIRS: ${{ inputs.pairs }}
+          WARMUPS: ${{ inputs.warmups }}
+          COUNTER_PASS: ${{ inputs.counter_pass }}
+          REQUIRE_WIN: ${{ inputs.require_win }}
+        run: |
+          set -euo pipefail
+          COUNT="${COUNT:-100000}"
+          DIM="${DIM:-128}"
+          EFC="${EFC:-64,200}"
+          THREADS="${THREADS:-1}"
+          PAIRS="${PAIRS:-6}"
+          WARMUPS="${WARMUPS:-1}"
+          FLAGS=(--require-pinning)
+          if [[ "$COUNTER_PASS" == "true" ]]; then FLAGS+=(--counter-pass); fi
+          if [[ "$REQUIRE_WIN" == "true" ]]; then FLAGS+=(--require-win); fi
+          python benchmarks/methodology/paired_hnsw.py \
+            --base-bin .artifacts/base-runner \
+            --head-bin .artifacts/head-runner \
+            --data ".artifacts/methodology-vectors-${COUNT}-${DIM}.f32" \
+            --count "$COUNT" \
+            --dim "$DIM" \
+            --efc "$EFC" \
+            --threads "$THREADS" \
+            --pairs "$PAIRS" \
+            --warmups "$WARMUPS" \
+            --label-base "${{ steps.refs.outputs.base_sha }}" \
+            --label-head "${{ steps.refs.outputs.head_sha }}" \
+            --out-dir .artifacts/methodology \
+            "${FLAGS[@]}" | tee .artifacts/methodology-console.txt
+
+      - name: Publish summary
+        if: always()
+        shell: bash
+        run: |
+          if [[ -f .artifacts/methodology/summary.md ]]; then
+            cat .artifacts/methodology/summary.md >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: paired-hnsw-${{ github.run_id }}
+          path: |
+            .artifacts/methodology
+            .artifacts/methodology-console.txt
+          include-hidden-files: true
+          if-no-files-found: warn
