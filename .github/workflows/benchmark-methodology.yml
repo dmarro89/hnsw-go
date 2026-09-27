@@ -7,6 +7,7 @@ on:
       - "BENCHMARKING.md"
       - "benchmarks/methodology/**"
       - ".github/workflows/benchmark-methodology.yml"
+      - ".github/workflows/paired-hnsw-performance.yml"
   workflow_dispatch:
 
 jobs:
@@ -75,7 +76,7 @@ jobs:
             --dim 128 \
             --efc 64 \
             --threads 1 \
-            --pairs 3 \
+            --pairs 4 \
             --warmups 1 \
             --counter-pass \
             --require-pinning \
