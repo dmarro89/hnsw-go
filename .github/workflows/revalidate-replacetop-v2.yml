@@ -12,8 +12,8 @@ jobs:
   performance:
     uses: ./.github/workflows/paired-hnsw-performance.yml
     with:
-      base_ref: main
-      head_ref: perf-revalidate-replacetop-v2
+      base_ref: ${{ github.event.pull_request.base.sha }}
+      head_ref: ${{ github.event.pull_request.head.sha }}
       count: 100000
       dim: 128
       efc: "64,200"
