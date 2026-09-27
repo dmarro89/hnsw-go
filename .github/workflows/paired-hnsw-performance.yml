@@ -148,13 +148,20 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          # Use the same harness source for both variants. This lets the workflow
+          # compare refs created before benchmark methodology v2 existed while
+          # keeping the measured hnsw package itself at the requested ref.
+          mkdir -p ../hnsw-go-base/.benchmark-methodology-runner
+          mkdir -p ../hnsw-go-head/.benchmark-methodology-runner
+          cp benchmarks/methodology/go/main.go ../hnsw-go-base/.benchmark-methodology-runner/main.go
+          cp benchmarks/methodology/go/main.go ../hnsw-go-head/.benchmark-methodology-runner/main.go
           (
             cd ../hnsw-go-base
-            GOTOOLCHAIN=local go build -o "$GITHUB_WORKSPACE/.artifacts/base-runner" ./benchmarks/methodology/go
+            GOTOOLCHAIN=local go build -o "$GITHUB_WORKSPACE/.artifacts/base-runner" ./.benchmark-methodology-runner
           )
           (
             cd ../hnsw-go-head
-            GOTOOLCHAIN=local go build -o "$GITHUB_WORKSPACE/.artifacts/head-runner" ./benchmarks/methodology/go
+            GOTOOLCHAIN=local go build -o "$GITHUB_WORKSPACE/.artifacts/head-runner" ./.benchmark-methodology-runner
           )
 
       - name: Generate deterministic dataset
