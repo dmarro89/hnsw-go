@@ -1,0 +1,38 @@
+name: Revalidate combined micro-wins v2
+
+on:
+  pull_request:
+    branches: ["main"]
+    paths:
+      - "hnsw/**"
+      - "structs/**"
+      - ".github/workflows/revalidate-combined-microwins-v2.yml"
+
+jobs:
+  serial-performance:
+    uses: ./.github/workflows/paired-hnsw-performance.yml
+    with:
+      base_ref: ${{ github.event.pull_request.base.sha }}
+      head_ref: ${{ github.event.pull_request.head.sha }}
+      count: 100000
+      dim: 128
+      efc: "64,200"
+      threads: 1
+      pairs: 6
+      warmups: 1
+      counter_pass: true
+      require_win: false
+
+  parallel-performance:
+    uses: ./.github/workflows/paired-hnsw-performance.yml
+    with:
+      base_ref: ${{ github.event.pull_request.base.sha }}
+      head_ref: ${{ github.event.pull_request.head.sha }}
+      count: 100000
+      dim: 128
+      efc: "64,200"
+      threads: 4
+      pairs: 6
+      warmups: 1
+      counter_pass: true
+      require_win: false
